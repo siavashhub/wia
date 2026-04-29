@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en" class="">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WIA — Work Intelligence Agent</title>
+    <link rel="icon" type="image/png" href="/static/logo.png" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <!-- Tailwind CDN: enable dark-mode-by-class BEFORE the runtime loads. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = { darkMode: 'class' };
+    </script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100" x-data="wia()" x-init="init()">
+    <header class="border-b bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+        <div class="flex items-center gap-3">
+          <img src="/static/logo.png" alt="WIA logo" class="h-8 w-8 rounded" />
+          <div>
+            <h1 class="text-lg font-semibold leading-tight">WIA</h1>
+            <p class="text-xs text-slate-500 dark:text-slate-400">Work Intelligence Agent</p>
+          </div>
+          <nav class="ml-4 flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              @click="setView('briefing')"
+              :class="view === 'briefing' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+              class="rounded-md px-3 py-1 text-xs"
+            >🗓 Briefing</button>
+            <button
+              type="button"
+              role="tab"
+              @click="setView('review')"
+              :class="view === 'review' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+              class="rounded-md px-3 py-1 text-xs"
+            >🧠 Review</button>
+          </nav>
+        </div>
+        <div class="flex items-center gap-3 text-sm">
+          <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
+            <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">☀ Light</button>
+            <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">🌙 Dark</button>
+            <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">🖥 Auto</button>
+          </div>
+          <template x-if="workiq.ready">
+            <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">✓ Work IQ connected</span>
+          </template>
+          <template x-if="!workiq.ready">
+            <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
+              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-6 py-6 space-y-6">
+      <!-- Briefing view ------------------------------------------------- -->
+      <div x-show="view === 'briefing'" class="space-y-6">
+      <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" :aria-busy="loading ? 'true' : 'false'">
+        <div x-show="loading" x-cloak class="-mx-6 -mt-6 mb-4 px-6 pt-1">
+          <div class="wia-progress-track"><div class="wia-progress-bar"></div></div>
+        </div>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <button @click="prevWeek()" :disabled="!canGoBack()" class="rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">‹</button>
+              <h2 class="text-xl font-semibold">Week of <span x-text="weekLabel()"></span></h2>
+              <button @click="nextWeek()" :disabled="!canGoForward()" class="rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">›</button>
+              <button @click="goCurrentWeek()" x-show="weekOffset !== 0" class="ml-2 rounded border px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">This week</button>
+            </div>
+            <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              <template x-if="briefing">
+                <span>You logged <strong x-text="briefing.totals.total_hours.toFixed(1)"></strong> hours across <span x-text="briefing.entries.length"></span> activities.</span>
+              </template>
+              <template x-if="briefing && briefing.status === 'no-signals'">
+                <span class="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">No signals from Work IQ for this week.</span>
+              </template>
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button @click="rescan()" :disabled="loading" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
+              <span x-text="loading ? 'Scanning…' : ((briefing && briefing.entries && briefing.entries.length) ? '🔎 Rescan' : '🔎 Scan')"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Signal selection ------------------------------------------------ -->
+        <div class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-500 dark:text-slate-400">Signals to scan:</span>
+          <div class="flex flex-wrap gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Signals to scan">
+            <template x-for="sig in availableSignals" :key="sig.key">
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="(prefs.enabled_signals || []).includes(sig.key)"
+                @click="toggleSignal(sig.key, !(prefs.enabled_signals || []).includes(sig.key))"
+                :class="[
+                  (prefs.enabled_signals || []).includes(sig.key)
+                    ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700'
+                    : 'text-slate-600 opacity-70 hover:opacity-100 dark:text-slate-300',
+                  (loading && (prefs.enabled_signals || []).includes(sig.key)) ? 'scan-pending' : ''
+                ]"
+                class="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+              >
+                <span x-text="sig.label"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <template x-if="briefing">
+          <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 transition-opacity" :class="loading ? 'animate-pulse opacity-70' : ''">
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Meetings</div><div class="text-lg font-semibold" x-text="briefing.totals.meetings_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Focus</div><div class="text-lg font-semibold" x-text="briefing.totals.focus_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Collaboration</div><div class="text-lg font-semibold" x-text="briefing.totals.collaboration_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Total</div><div class="text-lg font-semibold" x-text="briefing.totals.total_hours + 'h'"></div></div>
+          </div>
+        </template>
+      </section>
+
+      <section class="rounded-lg border bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <div>
+            <div class="text-slate-500 dark:text-slate-400">Last scan</div>
+            <div class="font-medium">
+              <span x-text="schedule.last_scan_at ? formatDateTime(schedule.last_scan_at) : 'never'"></span>
+              <template x-if="schedule.last_scan_week_of">
+                <span class="ml-1 text-slate-500 dark:text-slate-400" x-text="'· week of ' + schedule.last_scan_week_of"></span>
+              </template>
+              <template x-if="schedule.last_scan_trigger">
+                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300" x-text="schedule.last_scan_trigger"></span>
+              </template>
+              <template x-if="schedule.last_scan_status">
+                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs dark:bg-slate-800" x-text="schedule.last_scan_status"></span>
+              </template>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-slate-500 dark:text-slate-400">Auto-scan</label>
+            <select x-model.number="schedule.interval_minutes" @change="setSchedule(schedule.interval_minutes)" class="rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800">
+              <option :value="0">Manual only</option>
+              <option :value="60">Every 1 hour</option>
+              <option :value="120">Every 2 hours</option>
+              <option :value="240">Every 4 hours</option>
+              <option :value="480">Every 8 hours</option>
+              <option :value="1440">Once a day</option>
+            </select>
+          </div>
+        </div>
+        <div class="mt-3 border-t pt-3 dark:border-slate-700">
+          <button @click="toggleHistory()" class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+            <span x-text="historyOpen ? '▾' : '▸'"></span>
+            <span>Scan history</span>
+          </button>
+          <div x-show="historyOpen" x-cloak class="mt-3">
+            <!-- Toolbar: range filter + view toggle -->
+            <div class="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-slate-500 dark:text-slate-400">Range:</span>
+              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History range">
+                <template x-for="r in ['7d','30d','all']" :key="r">
+                  <button
+                    type="button"
+                    @click="setHistoryRange(r)"
+                    :class="historyRange === r ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                    class="rounded-md px-2 py-0.5 text-xs uppercase"
+                    x-text="r === 'all' ? 'All' : r"
+                  ></button>
+                </template>
+              </div>
+              <span class="ml-2 text-slate-500 dark:text-slate-400">View:</span>
+              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History view">
+                <button type="button" @click="setHistoryView('flat')" :class="historyView === 'flat' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">All scans</button>
+                <button type="button" @click="setHistoryView('weekly')" :class="historyView === 'weekly' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">Group by week</button>
+              </div>
+            </div>
+
+            <template x-if="historyLoading">
+              <div class="text-xs text-slate-500 dark:text-slate-400">Loading…</div>
+            </template>
+            <template x-if="!historyLoading && history.length === 0">
+              <div class="text-xs text-slate-500 dark:text-slate-400">No scans recorded yet.</div>
+            </template>
+
+            <!-- Flat scrollable table -->
+            <template x-if="!historyLoading && history.length > 0 && historyView === 'flat'">
+              <div class="max-h-56 overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
+                <table class="w-full min-w-[640px] text-left text-xs">
+                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
+                    <tr>
+                      <th class="py-1 pl-2 pr-3 font-medium">Ran at</th>
+                      <th class="py-1 pr-3 font-medium">Week</th>
+                      <th class="py-1 pr-3 font-medium">Trigger</th>
+                      <th class="py-1 pr-3 font-medium">Status</th>
+                      <th class="py-1 pr-3 font-medium">Entries</th>
+                      <th class="py-1 pr-3 font-medium">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="row in filteredHistory()" :key="row.id">
+                      <tr class="border-t dark:border-slate-700">
+                        <td class="py-1 pl-2 pr-3" x-text="formatDateTime(row.ran_at)"></td>
+                        <td class="py-1 pr-3" x-text="row.week_of"></td>
+                        <td class="py-1 pr-3 uppercase tracking-wide text-slate-500 dark:text-slate-400" x-text="row.trigger"></td>
+                        <td class="py-1 pr-3" x-text="row.status"></td>
+                        <td class="py-1 pr-3" x-text="row.entry_count"></td>
+                        <td class="py-1 pr-3" x-text="formatDuration(row.duration_ms)"></td>
+                      </tr>
+                    </template>
+                    <template x-if="filteredHistory().length === 0">
+                      <tr><td colspan="6" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <!-- Grouped by week -->
+            <template x-if="!historyLoading && history.length > 0 && historyView === 'weekly'">
+              <div class="max-h-56 overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
+                <table class="w-full min-w-[640px] text-left text-xs">
+                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
+                    <tr>
+                      <th class="w-6"></th>
+                      <th class="py-1 pr-3 font-medium">Week</th>
+                      <th class="py-1 pr-3 font-medium">Scans</th>
+                      <th class="py-1 pr-3 font-medium">Last run</th>
+                      <th class="py-1 pr-3 font-medium">Last status</th>
+                      <th class="py-1 pr-3 font-medium">Last entries</th>
+                      <th class="py-1 pr-3 font-medium">Max duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="g in groupedHistory()" :key="g.week_of">
+                      <template x-for="row in [{kind:'group'}, ...(historyExpandedWeeks[g.week_of] ? g.scans.map(s => ({kind:'sub', scan:s})) : [])]" :key="g.week_of + ':' + (row.kind === 'group' ? 'g' : row.scan.id)">
+                        <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40 font-medium' : 'border-t border-dashed dark:border-slate-700/60'">
+                          <template x-if="row.kind === 'group'">
+                            <td class="text-center align-middle">
+                              <button @click="toggleHistoryWeek(g.week_of)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(historyExpandedWeeks[g.week_of] ? 'Collapse ' : 'Expand ') + g.week_of">
+                                <span x-text="historyExpandedWeeks[g.week_of] ? '▼' : '▶'"></span>
+                              </button>
+                            </td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.week_of"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3 text-slate-500 dark:text-slate-400" x-text="'· ' + (row.scan.trigger || '').toUpperCase()"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.scans.length"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'"><td></td></template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="formatDateTime(g.last_ran_at)"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="formatDateTime(row.scan.ran_at)"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.last_status"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="row.scan.status"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.last_entry_count"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="row.scan.entry_count"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="formatDuration(g.max_duration_ms)"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="formatDuration(row.scan.duration_ms)"></td>
+                          </template>
+                        </tr>
+                      </template>
+                    </template>
+                    <template x-if="groupedHistory().length === 0">
+                      <tr><td colspan="7" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <!-- Caption + Load more -->
+            <div x-show="!historyLoading && history.length > 0" class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span x-text="historyCaption()"></span>
+              <button
+                x-show="historyView === 'flat' && canLoadMoreHistory()"
+                @click="loadMoreHistory()"
+                :disabled="historyLoading"
+                class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              >Load more</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section x-show="briefing?.top_work_areas?.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 transition-opacity" :class="loading ? 'animate-pulse opacity-70' : ''">
+        <h3 class="font-semibold">Top work areas</h3>
+        <ul class="mt-3 space-y-1 text-sm">
+          <template x-for="area in briefing.top_work_areas" :key="area.label">
+            <li class="flex justify-between border-b py-1.5 dark:border-slate-700"><span x-text="area.label"></span><span class="font-medium" x-text="area.hours + 'h'"></span></li>
+          </template>
+        </ul>
+      </section>
+
+      <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-3">
+            <h3 class="font-semibold">Time entries</h3>
+            <button @click="expandAll()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400" x-text="allExpanded() ? 'Collapse all' : 'Expand all'"></button>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button @click="copyTable()" class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+              <span x-text="copied ? '✓ Copied' : '📋 Copy as table'"></span>
+            </button>
+            <button @click="downloadCsv()" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">⬇️ Export CSV</button>
+          </div>
+        </div>
+
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-left text-slate-500 dark:text-slate-400">
+              <tr class="border-b dark:border-slate-700">
+                <th class="w-8"></th>
+                <th class="py-2 pr-3">Category</th>
+                <th class="pr-3">Label</th>
+                <template x-for="(label, i) in dayLabels" :key="i">
+                  <th class="px-2 text-right">
+                    <span x-text="label"></span><br>
+                    <span class="text-[10px] font-normal" x-text="dayDate(i)"></span>
+                  </th>
+                </template>
+                <th class="px-3 text-right">Total</th>
+                <th class="px-3 text-center">Conf.</th>
+                <th class="w-12"></th>
+              </tr>
+            </thead>
+            <tbody :class="loading ? 'animate-pulse opacity-70' : ''">
+              <template x-for="group in groupedEntries()" :key="group.category">
+                <template x-for="row in groupRows(group)" :key="row.key">
+                  <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : '')">
+                    <!-- Chevron column -->
+                    <td class="text-center align-middle">
+                      <template x-if="row.kind === 'group'">
+                        <button @click="toggleGroup(group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[group.category] ? 'Collapse ' : 'Expand ') + group.category">
+                          <span x-text="expanded[group.category] ? '▼' : '▶'"></span>
+                        </button>
+                      </template>
+                    </td>
+                    <!-- Category -->
+                    <td class="py-2 pr-3 align-middle">
+                      <template x-if="row.kind === 'group'">
+                        <span x-text="group.category"></span>
+                      </template>
+                      <template x-if="row.kind === 'sub'">
+                        <span></span>
+                      </template>
+                    </td>
+                    <!-- Label -->
+                    <td class="pr-3 align-middle">
+                      <template x-if="row.kind === 'group'">
+                        <span class="text-xs text-slate-500 dark:text-slate-400" x-text="group.entries.length + (group.entries.length === 1 ? ' item' : ' items')"></span>
+                      </template>
+                      <template x-if="row.kind === 'sub'">
+                        <input class="w-full bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
+                      </template>
+                    </td>
+                    <!-- Day cells -->
+                    <template x-for="(label, i) in dayLabels" :key="i">
+                      <td class="px-2 text-right tabular-nums" x-text="row.kind === 'group' ? hhmm(group.daily[dayIso(i)] || 0) : hoursForDay(row.entry, i)"></td>
+                    </template>
+                    <!-- Total -->
+                    <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(group.total) : hhmm(row.entry.duration_hours)"></td>
+                    <!-- Confidence -->
+                    <td class="px-3 text-center">
+                      <template x-if="row.kind === 'sub'">
+                        <span class="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800" x-text="row.entry.confidence"></span>
+                      </template>
+                    </td>
+                    <!-- Delete -->
+                    <td class="text-center">
+                      <template x-if="row.kind === 'sub'">
+                        <button class="text-xs text-red-600 hover:underline" @click="deleteEntry(row.entry)">×</button>
+                      </template>
+                    </td>
+                  </tr>
+                </template>
+              </template>
+              <template x-if="!briefing?.entries?.length">
+                <tr><td :colspan="5 + dayLabels.length" class="py-6 text-center text-slate-500 dark:text-slate-400">No entries yet. Click Rescan.</td></tr>
+              </template>
+            </tbody>
+            <template x-if="briefing?.entries?.length">
+              <tfoot class="font-medium">
+                <tr class="border-t-2 dark:border-slate-700">
+                  <td></td>
+                  <td class="py-2 pr-3" colspan="2">Daily totals</td>
+                  <template x-for="(label, i) in dayLabels" :key="i">
+                    <td class="px-2 text-right tabular-nums" x-text="dayTotal(i)"></td>
+                  </template>
+                  <td class="px-3 text-right tabular-nums" x-text="weekTotal()"></td>
+                  <td colspan="2"></td>
+                </tr>
+              </tfoot>
+            </template>
+          </table>
+        </div>
+      </section>
+
+      <p x-show="error" x-text="error" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"></p>
+      </div><!-- /briefing view -->
+
+      <!-- Review view --------------------------------------------------- -->
+      <div x-show="view === 'review'" class="space-y-6">
+        <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-semibold">WIA Review</h2>
+              <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                Roll up your weekly briefings into 1:1-ready insights and talking points.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Period kind">
+                <button type="button" @click="setReviewKind('month')" :class="reviewKind === 'month' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-3 py-1 text-xs">Monthly</button>
+                <button type="button" @click="setReviewKind('year')" :class="reviewKind === 'year' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-3 py-1 text-xs">Yearly</button>
+              </div>
+              <template x-if="reviewKind === 'month'">
+                <input type="month" x-model="reviewMonth" @change="loadReview()" class="rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800" />
+              </template>
+              <template x-if="reviewKind === 'year'">
+                <input type="number" x-model.number="reviewYear" @change="loadReview()" min="2020" max="2100" class="w-24 rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800" />
+              </template>
+              <button @click="loadReview()" :disabled="reviewLoading" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
+                <span x-text="reviewLoading ? 'Loading…' : '↻ Refresh'"></span>
+              </button>
+            </div>
+          </div>
+
+          <template x-if="review && review.status === 'no-data'">
+            <p class="mt-4 rounded bg-amber-100 px-3 py-2 text-sm text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+              No saved briefings cover this period yet. Run a Briefing rescan for the relevant weeks first.
+            </p>
+          </template>
+
+          <template x-if="review && review.status === 'ok'">
+            <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Total</div><div class="text-lg font-semibold" x-text="review.totals.total_hours.toFixed(0) + 'h'"></div><div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="review.totals.weeks_observed + ' weeks'"></div></div>
+              <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Meetings</div><div class="text-lg font-semibold" x-text="review.totals.meetings_hours.toFixed(0) + 'h'"></div><div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(review.totals.meeting_ratio * 100).toFixed(0) + '% of total'"></div></div>
+              <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Focus</div><div class="text-lg font-semibold" x-text="review.totals.focus_hours.toFixed(0) + 'h'"></div></div>
+              <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Collaboration</div><div class="text-lg font-semibold" x-text="review.totals.collaboration_hours.toFixed(0) + 'h'"></div></div>
+            </div>
+          </template>
+
+          <template x-if="review && review.delta">
+            <p class="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              vs. previous period:
+              <span :class="review.delta.total_hours_delta >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'" x-text="formatSigned(review.delta.total_hours_delta) + 'h total'"></span>
+              ·
+              <span x-text="formatSigned(review.delta.meetings_ratio_delta * 100) + 'pp meeting share'"></span>
+              ·
+              <span x-text="formatSigned(review.delta.focus_hours_delta) + 'h focus'"></span>
+            </p>
+          </template>
+        </section>
+
+        <!-- Missing data -------------------------------------------------- -->
+        <section x-show="review && review.missing_weeks && review.missing_weeks.length" class="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900 dark:bg-amber-950/40">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 class="font-semibold text-amber-900 dark:text-amber-200">Missing data for this period</h3>
+              <p class="mt-1 text-sm text-amber-800 dark:text-amber-300">
+                <span x-text="review.missing_weeks.length"></span> of
+                <span x-text="review.expected_weeks"></span> weeks have not been scanned yet.
+                Running scans for these weeks will fill them into your review.
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                @click="scanAllMissing()"
+                :disabled="reviewScanning"
+                class="rounded bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                <span x-text="reviewScanning ? 'Scanning…' : 'Scan all missing weeks'"></span>
+              </button>
+            </div>
+          </div>
+          <ul class="mt-3 grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <template x-for="w in review.missing_weeks" :key="w">
+              <li class="flex items-center justify-between rounded border border-amber-200 bg-white px-2 py-1 dark:border-amber-900 dark:bg-slate-900">
+                <span class="font-mono text-xs" x-text="'Week of ' + w"></span>
+                <button
+                  @click="scanMissingWeek(w)"
+                  :disabled="reviewScanning || (scanningWeek === w)"
+                  class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                  x-text="scanningWeek === w ? 'Scanning…' : 'Scan'"
+                ></button>
+              </li>
+            </template>
+          </ul>
+          <p x-show="reviewScanError" x-text="reviewScanError" class="mt-2 text-xs text-red-700 dark:text-red-400"></p>
+        </section>
+
+        <!-- Category breakdown + Top initiatives -->
+        <div x-show="review && review.status === 'ok'" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <h3 class="font-semibold">Category breakdown</h3>
+            <ul class="mt-3 space-y-2 text-sm">
+              <template x-for="cat in review.categories" :key="cat.category">
+                <li>
+                  <div class="flex items-center justify-between">
+                    <span x-text="cat.category"></span>
+                    <span class="font-medium tabular-nums" x-text="cat.hours.toFixed(0) + 'h · ' + cat.percent.toFixed(0) + '%'"></span>
+                  </div>
+                  <div class="mt-1 h-2 w-full overflow-hidden rounded bg-slate-100 dark:bg-slate-800">
+                    <div class="h-full bg-indigo-500" :style="`width: ${Math.min(100, cat.percent)}%`"></div>
+                  </div>
+                </li>
+              </template>
+            </ul>
+          </section>
+
+          <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <h3 class="font-semibold">Top initiatives</h3>
+            <ul class="mt-3 space-y-1 text-sm">
+              <template x-for="t in review.top_labels" :key="t.label">
+                <li class="flex items-start justify-between border-b py-1.5 dark:border-slate-700">
+                  <div class="min-w-0 pr-3">
+                    <div class="truncate" x-text="t.label" :title="t.label"></div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                  </div>
+                  <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+                </li>
+              </template>
+              <template x-if="!review.top_labels.length"><li class="py-3 text-slate-500">No initiatives recorded.</li></template>
+            </ul>
+          </section>
+        </div>
+
+        <!-- Insights -->
+        <section x-show="review && review.insights && review.insights.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h3 class="font-semibold">Insights</h3>
+          <ul class="mt-3 space-y-2 text-sm">
+            <template x-for="ins in review.insights" :key="ins.title">
+              <li class="rounded border-l-4 bg-slate-50 px-3 py-2 dark:bg-slate-800/50" :class="insightBorder(ins.kind)">
+                <div class="font-medium" x-text="ins.title"></div>
+                <div class="text-slate-600 dark:text-slate-300" x-text="ins.detail"></div>
+              </li>
+            </template>
+          </ul>
+        </section>
+
+        <!-- Weekly trend -->
+        <section x-show="review && review.weekly_trend && review.weekly_trend.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h3 class="font-semibold">Weekly trend</h3>
+          <div class="mt-4 flex items-end gap-2 overflow-x-auto pb-2" x-data="{ max: weeklyMax() }">
+            <template x-for="w in review.weekly_trend" :key="w.week_of">
+              <div class="flex flex-col items-center gap-1">
+                <div class="text-[10px] tabular-nums text-slate-500 dark:text-slate-400" x-text="w.total_hours.toFixed(0) + 'h'"></div>
+                <div class="w-8 rounded bg-indigo-500/80" :style="`height: ${Math.max(4, (w.total_hours / Math.max(1, weeklyMax())) * 120)}px`"></div>
+                <div class="text-[10px] text-slate-500 dark:text-slate-400" x-text="w.week_of.slice(5)"></div>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <!-- 1:1 talking points -->
+        <section x-show="review && review.talking_points && review.talking_points.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="font-semibold">1:1 talking points</h3>
+            <div class="flex gap-2">
+              <button @click="copyReview()" class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+                <span x-text="reviewCopied ? '✓ Copied' : '📋 Copy review'"></span>
+              </button>
+              <button @click="downloadReview()" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">⬇️ Export Markdown</button>
+            </div>
+          </div>
+          <template x-for="section in talkingPointSections" :key="section.key">
+            <div class="mt-4" x-show="groupedTalkingPoints()[section.key]?.length">
+              <h4 class="text-sm font-medium text-slate-700 dark:text-slate-200" x-text="section.label"></h4>
+              <ul class="mt-1 list-disc space-y-1 pl-5 text-sm">
+                <template x-for="(p, idx) in groupedTalkingPoints()[section.key]" :key="section.key + idx">
+                  <li>
+                    <textarea
+                      x-model="p.text"
+                      rows="1"
+                      class="w-full resize-none bg-transparent focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1"
+                      @input="autosizeTextarea($event)"
+                    ></textarea>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </template>
+        </section>
+
+        <p x-show="reviewError" x-text="reviewError" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"></p>
+      </div><!-- /review view -->
+    </main>
+
+    <footer class="mx-auto max-w-7xl px-6 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+      WIA <span x-text="appVersion"></span> - powered by <a class="underline hover:no-underline" href="https://github.com/microsoft/work-iq" target="_blank" rel="noopener">Work IQ</a>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

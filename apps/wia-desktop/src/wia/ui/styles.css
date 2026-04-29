@@ -1,0 +1,35 @@
+/* WIA — minimal custom styles. Tailwind handles the rest via CDN. */
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+input:focus { outline: 2px solid #6366f1; outline-offset: 1px; border-radius: 2px; }
+
+/* Indeterminate progress bar shown while a scan is in flight. */
+.wia-progress-track {
+  position: relative;
+  height: 2px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgba(99, 102, 241, 0.15);
+}
+.wia-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, #6366f1, transparent);
+  animation: wia-progress 1.4s ease-in-out infinite;
+}
+@keyframes wia-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* Pulsing ring on signal chips that the in-flight scan will touch. */
+.scan-pending {
+  animation: wia-scan-pending 1.4s ease-in-out infinite;
+}
+@keyframes wia-scan-pending {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
+  50%      { box-shadow: 0 0 0 4px rgba(99, 102, 241, 0); }
+}

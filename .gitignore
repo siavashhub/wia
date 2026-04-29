@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build / distribution
+build/
+dist/
+*.spec.bak
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / local
+.env
+.env.*
+!.env.example
+
+# Local DBs / caches (also lives in %LOCALAPPDATA%, but in case of repro)
+*.db
