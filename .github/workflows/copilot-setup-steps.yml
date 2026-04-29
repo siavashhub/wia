@@ -1,0 +1,45 @@
+# Environment bootstrap for the GitHub Copilot **coding agent**.
+#
+# The coding agent runs this workflow (job name MUST be `copilot-setup-steps`)
+# inside its sandbox before it starts editing files, so that lint/test commands
+# work the same way they do in CI.
+#
+# Docs: https://docs.github.com/en/copilot/customizing-copilot/customizing-the-development-environment-for-copilot-coding-agent
+
+name: copilot-setup-steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Sync project dependencies
+        run: uv sync --all-extras
+
+      - name: Verify lint + tests run
+        run: |
+          uv run ruff check .
+          uv run pytest -q

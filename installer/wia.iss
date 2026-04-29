@@ -3,7 +3,9 @@
 ; Expects PyInstaller output at dist\wia-desktop\
 
 #define MyAppName "WIA"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "WIA contributors"
 #define MyAppExeName "wia-desktop.exe"
 

@@ -1,0 +1,9 @@
+# Default owners for everything in the repo. Required so the GitHub Copilot
+# code review agent and human reviewers are auto-requested on PRs.
+#
+*                       @siavashhub
+
+# Workflow + security policy changes deserve extra scrutiny.
+/.github/workflows/     @siavashhub
+/.github/CODEOWNERS     @siavashhub
+/installer/             @siavashhub

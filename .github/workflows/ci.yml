@@ -4,20 +4,77 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  lint-and-test:
+    name: Lint & test (Windows / Python ${{ matrix.python-version }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --all-extras
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check . --output-format=github
+
+      - name: Pytest with coverage
+        run: uv run pytest -q --cov=apps/wia-desktop/src/wia --cov-report=xml --cov-report=term --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: |
+            test-results.xml
+            coverage.xml
+          if-no-files-found: ignore
+
+  build-smoke:
+    name: PyInstaller smoke build
+    runs-on: windows-latest
+    needs: lint-and-test
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.11
-      - name: Sync deps
-        run: uv sync --all-extras
-      - name: Lint
-        run: uv run ruff check .
-      - name: Test
-        run: uv run pytest -q
+      - run: uv python install 3.11
+      - run: uv sync
+      - run: uv pip install pyinstaller
+      - name: Build executable
+        run: uv run pyinstaller --noconfirm apps/wia-desktop/pyinstaller.spec
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/wia-desktop/wia-desktop.exe")) {
+            throw "PyInstaller build did not produce wia-desktop.exe"
+          }
+          Get-ChildItem dist/wia-desktop | Select-Object -First 20
