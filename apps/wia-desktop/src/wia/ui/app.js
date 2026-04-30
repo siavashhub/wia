@@ -4,10 +4,13 @@ function wia() {
     workiq: { installed: false, ready: false, version: null, message: null },
     enabling: false,
     briefing: null,
-    loading: false,
+    loading: false,           // any briefing fetch in flight (cache or scan)
+    scanningBriefing: false,  // a background scan (refresh=true) is running
+    scanningWeekIso: null,    // which Monday-week the scan is targeting
     error: null,
     copied: false,
-    weekOffset: 0, // 0 = current week, -1 = last week, ... down to -4
+    weekOffset: 0, // 0 = current week, -1 = last week, ...
+    minWeekOffset: -52, // allow up to 1 year of history
     prefs: { theme: 'system', enabled_signals: ['calendar'] },
     availableSignals: [
       { key: 'calendar', label: '🗓 Calendar' },
@@ -37,6 +40,7 @@ function wia() {
     reviewScanning: false,
     reviewScanError: null,
     scanningWeek: null,
+    missingMonthExpanded: {}, // { [YYYY-MM]: boolean }
     reviewKind: 'month', // 'month' | 'year'
     reviewMonth: '', // 'YYYY-MM'
     reviewYear: new Date().getFullYear(),
@@ -53,11 +57,47 @@ function wia() {
       this.reviewYear = now.getFullYear();
       await this.loadPrefs();
       this.applyTheme(this.prefs.theme);
-      await Promise.all([this.loadHealth(), this.loadSchedule(), this.loadStatus()]);
-      if (this.workiq.ready) {
-        await this.loadBriefing(false);
-      }
+      // Cache-only briefing read doesn't need Work IQ, so fan out in parallel
+      // with the status/health/schedule probes. The user sees cached data
+      // (or a skeleton, then a state-aware empty card) within one round-trip
+      // instead of waiting for the workiq status probe to come back first.
+      await Promise.all([
+        this.loadHealth(),
+        this.loadSchedule(),
+        this.loadStatus(),
+        this.loadBriefing(false),
+      ]);
       setInterval(() => this.loadSchedule(), 30000);
+    },
+
+    // ---- UI state helpers ------------------------------------------------
+    hasEntries() { return !!(this.briefing && this.briefing.entries && this.briefing.entries.length); },
+
+    // True before we've ever received a briefing payload (first paint).
+    bootingBriefing() { return this.briefing === null; },
+
+    // Distinguish a brand-new install (no scans on record) from a week
+    // that legitimately has no activity.
+    isFirstRun() {
+      return !this.schedule.last_scan_at && !this.hasEntries();
+    },
+
+    // Human-friendly relative time, e.g. "2 minutes ago". Falls back to
+    // a localized timestamp for anything older than ~30 days.
+    timeAgo(iso) {
+      if (!iso) return 'never';
+      const then = new Date(iso).getTime();
+      if (!Number.isFinite(then)) return 'never';
+      const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+      if (diffSec < 45) return 'just now';
+      if (diffSec < 90) return '1 minute ago';
+      const diffMin = Math.round(diffSec / 60);
+      if (diffMin < 60) return `${diffMin} minutes ago`;
+      const diffHr = Math.round(diffMin / 60);
+      if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
+      const diffDay = Math.round(diffHr / 24);
+      if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
+      try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
     },
 
     async loadHealth() {
@@ -86,6 +126,7 @@ function wia() {
     async setTheme(theme) {
       this.prefs.theme = theme;
       this.applyTheme(theme);
+      try { window.localStorage && window.localStorage.setItem('wia-theme', theme); } catch (e) { /* ignore */ }
       try {
         await fetch('/api/prefs', {
           method: 'PUT',
@@ -121,6 +162,11 @@ function wia() {
       try {
         const r = await fetch('/api/prefs');
         this.prefs = await r.json();
+        try {
+          if (this.prefs && this.prefs.theme) {
+            window.localStorage && window.localStorage.setItem('wia-theme', this.prefs.theme);
+          }
+        } catch (e) { /* ignore */ }
       } catch (e) { /* keep defaults */ }
     },
 
@@ -164,8 +210,8 @@ function wia() {
       return `${y}-${mm}-${dd}`;
     },
 
-    canGoBack() { return this.weekOffset > -4 && !this.loading; },
-    canGoForward() { return this.weekOffset < 0 && !this.loading; },
+    canGoBack() { return this.weekOffset > this.minWeekOffset; },
+    canGoForward() { return this.weekOffset < 0; },
 
     async prevWeek() {
       if (!this.canGoBack()) return;
@@ -204,24 +250,94 @@ function wia() {
     },
 
     async loadBriefing(refresh) {
-      this.loading = true; this.error = null;
+      // Two modes:
+      //   refresh=false  → quick cache read for the displayed week. Used by
+      //                    init() and Prev/Next week navigation. Cheap.
+      //   refresh=true   → full Work IQ scan. Long-running. We treat it as a
+      //                    background task so the user can navigate weeks
+      //                    while it's in flight. Only one manual scan is
+      //                    allowed at a time.
+      if (refresh) {
+        if (this.scanningBriefing) {
+          this.error = 'A scan is already running for week ' + this.scanningWeekIso + '. Please wait for it to finish.';
+          return;
+        }
+        return this._runBackgroundScan(this.weekStartIso(this.weekOffset));
+      }
+
+      // Cache-only path. Tag the request with the requested week so a slow
+      // response doesn't clobber a newer week the user has since navigated
+      // to.
+      const requestedWeek = this.weekStartIso(this.weekOffset);
+      this.loading = true;
+      this.error = null;
       try {
         const params = new URLSearchParams();
-        params.set('week_of', this.weekStartIso(this.weekOffset));
-        if (refresh) params.set('refresh', 'true');
+        params.set('week_of', requestedWeek);
         const r = await fetch(`/api/briefing?${params.toString()}`);
         if (!r.ok) throw new Error(await r.text());
-        this.briefing = await r.json();
+        const payload = await r.json();
+        // Drop the result if the user has navigated to another week while
+        // we were waiting for the cache lookup.
+        if (this.weekStartIso(this.weekOffset) !== requestedWeek) return;
+        this.briefing = payload;
         if (this.briefing.status === 'workiq-not-enabled') {
-          this.error = 'Click "Enable Work IQ" to connect.';
           await this.loadStatus();
-        }
-        if (refresh) {
-          await this.loadSchedule();
-          if (this.historyOpen) await this.loadHistory();
         }
       } catch (e) { this.error = String(e); }
       finally { this.loading = false; }
+    },
+
+    async _runBackgroundScan(weekIso) {
+      // Long-running Work IQ scan. Doesn't block week navigation: the user
+      // can switch to another week while this runs and we'll only paint the
+      // result if they come back. Sets ``scanningBriefing`` so the UI can
+      // show a banner on whichever week is in flight.
+      this.scanningBriefing = true;
+      this.scanningWeekIso = weekIso;
+      this.error = null;
+      try {
+        const params = new URLSearchParams({ week_of: weekIso, refresh: 'true' });
+        const r = await fetch(`/api/briefing?${params.toString()}`);
+        if (!r.ok) throw new Error(await r.text());
+        const payload = await r.json();
+        // Only swap the displayed briefing if the user is still on the
+        // week we just scanned. Otherwise the next cache fetch (on
+        // navigation back) will pick up the freshly persisted entries.
+        if (this.weekStartIso(this.weekOffset) === weekIso) {
+          this.briefing = payload;
+          if (this.briefing.status === 'workiq-not-enabled') {
+            this.error = 'Click "Enable Work IQ" to connect.';
+            await this.loadStatus();
+          }
+        }
+        await this.loadSchedule();
+        if (this.historyOpen) await this.loadHistory();
+      } catch (e) { this.error = `Scan for week ${weekIso} failed: ${e}`; }
+      finally {
+        this.scanningBriefing = false;
+        this.scanningWeekIso = null;
+      }
+    },
+
+    // True when the *currently displayed* week is being scanned. Drives
+    // the local progress bar / signal pulse / scanning caption.
+    isScanningCurrent() {
+      return this.scanningBriefing && this.scanningWeekIso === this.weekStartIso(this.weekOffset);
+    },
+
+    // Jump the displayed week to whichever Monday-week is currently being
+    // scanned in the background, if any. Used by the "jump to it" link.
+    async goToScanningWeek() {
+      if (!this.scanningBriefing || !this.scanningWeekIso) return;
+      // Compute the offset between today's Monday and the target Monday.
+      const target = new Date(this.scanningWeekIso + 'T00:00:00');
+      const todayMonday = this.weekStartFor(0);
+      const diffMs = target.getTime() - todayMonday.getTime();
+      const diffWeeks = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+      this.weekOffset = diffWeeks;
+      // Pull the cached version (probably empty) while the scan continues.
+      await this.loadBriefing(false);
     },
 
     rescan() { return this.loadBriefing(true); },
@@ -540,6 +656,58 @@ function wia() {
       this.reviewScanning = true;
       try {
         for (const w of weeks) {
+          this.scanningWeek = w;
+          const params = new URLSearchParams({ week_of: w, refresh: 'true' });
+          const r = await fetch(`/api/briefing?${params.toString()}`);
+          if (!r.ok) {
+            this.reviewScanError = `Scan for week ${w} failed: ${await r.text()}`;
+            break;
+          }
+        }
+        await this.loadReview();
+        await this.loadSchedule();
+        if (this.historyOpen) await this.loadHistory();
+      } finally {
+        this.scanningWeek = null;
+        this.reviewScanning = false;
+      }
+    },
+
+    // ---- Missing weeks grouped by month --------------------------------
+    // Group ``review.missing_weeks`` by their containing month so the UI
+    // can collapse long lists. Returns an array sorted ascending by month
+    // key (e.g. ``"2026-04"``).
+    missingWeeksByMonth() {
+      const weeks = this.review?.missing_weeks || [];
+      const groups = new Map();
+      for (const w of weeks) {
+        // ``w`` is a Monday ISO date. Use its month as the bucket key.
+        const monthKey = (w || '').slice(0, 7);
+        if (!groups.has(monthKey)) groups.set(monthKey, []);
+        groups.get(monthKey).push(w);
+      }
+      const out = [];
+      for (const [monthKey, list] of groups.entries()) {
+        if (!monthKey) continue;
+        const [y, m] = monthKey.split('-').map((s) => parseInt(s, 10));
+        let label = monthKey;
+        try {
+          label = new Date(y, (m || 1) - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        } catch { /* keep YYYY-MM */ }
+        out.push({ key: monthKey, label, weeks: list.sort() });
+      }
+      out.sort((a, b) => a.key.localeCompare(b.key));
+      return out;
+    },
+
+    async scanMissingMonth(monthKey) {
+      // Scan every missing week within ``monthKey`` (``YYYY-MM``).
+      const group = this.missingWeeksByMonth().find((g) => g.key === monthKey);
+      if (!group) return;
+      this.reviewScanError = null;
+      this.reviewScanning = true;
+      try {
+        for (const w of group.weeks) {
           this.scanningWeek = w;
           const params = new URLSearchParams({ week_of: w, refresh: 'true' });
           const r = await fetch(`/api/briefing?${params.toString()}`);

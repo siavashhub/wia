@@ -13,6 +13,7 @@ from wia.core.types import (
     ActivityBlock,
     Briefing,
     BriefingTotals,
+    Confidence,
     Source,
     TimeEntry,
     WorkAreaSummary,
@@ -187,11 +188,18 @@ async def build_briefing(
 def _totals_from_entries(entries: list[TimeEntry]) -> BriefingTotals:
     """Approximate totals when we don't have live blocks (cache path).
 
-    Calendar/meeting hours are inferred from confidence: ``HIGH`` entries
-    correspond to real calendar meetings; ``LOW`` entries are gap-fill
-    (admin/focus). We treat focus-time entries by label.
+    Confidence is the proxy for source (we don't persist source on
+    ``TimeEntry`` rows):
+
+    - ``HIGH`` → real calendar meetings.
+    - ``MEDIUM`` → Teams / email collaboration signals (or any entry
+      whose constituents include a Teams/email block, since
+      ``aggregate_entries`` keeps the lowest constituent confidence).
+    - ``LOW`` → inferred gap-fill (Admin / Focus). Focus entries are
+      additionally identified by label.
     """
-    meetings = sum(e.duration_hours for e in entries if e.confidence.value == "high")
+    meetings = sum(e.duration_hours for e in entries if e.confidence is Confidence.HIGH)
+    collab = sum(e.duration_hours for e in entries if e.confidence is Confidence.MEDIUM)
     focus = sum(
         e.duration_hours for e in entries if (e.label or "").lower().startswith("focus")
     )
@@ -200,5 +208,5 @@ def _totals_from_entries(entries: list[TimeEntry]) -> BriefingTotals:
         total_hours=round(total, 2),
         meetings_hours=round(meetings, 2),
         focus_hours=round(focus, 2),
-        collaboration_hours=0.0,
+        collaboration_hours=round(collab, 2),
     )
