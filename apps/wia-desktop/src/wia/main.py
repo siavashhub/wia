@@ -7,6 +7,7 @@ import socket
 import sys
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,28 @@ from wia.app import create_app
 from wia.config import get_settings
 
 log = logging.getLogger(__name__)
+
+
+def _ensure_std_streams() -> None:
+    """Provide a no-op stdout/stderr when running as a windowed PyInstaller exe.
+
+    Windowed builds set ``sys.stdout`` / ``sys.stderr`` to ``None``, which
+    breaks libraries that call ``.isatty()`` / ``.write()`` on them (notably
+    uvicorn's colorized log formatter). Substituting ``os.devnull`` keeps
+    those calls valid without producing visible output.
+    """
+    import io
+    import os
+
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            try:
+                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
+            except OSError:
+                setattr(sys, name, io.StringIO())
+
+
+_ensure_std_streams()
 
 
 def _find_free_port() -> int:
@@ -95,8 +118,30 @@ def _set_windows_app_user_model_id(app_id: str) -> None:
         log.debug("SetCurrentProcessExplicitAppUserModelID failed: %s", exc)
 
 
+def _selfcheck() -> int:
+    """Import-smoke the frozen app: build the FastAPI app and exit.
+
+    Used by CI to catch missing PyInstaller hidden imports / data files
+    (e.g. jsonschema's ``rfc3987_syntax`` grammar) before publishing a
+    release. Imports the full app graph that a real launch would, but
+    skips webview / uvicorn / network.
+    """
+    # Importing create_app pulls in wia.api.* -> wia.core.* -> wia.mcp_clients.*
+    # which is where transitive jsonschema/MCP imports live.
+    app = create_app()
+    # Touch the app to make sure it actually constructed.
+    assert app is not None
+    # Windowed PyInstaller builds may have no stdout; guard the print.
+    with suppress(Exception):
+        print("wia-desktop selfcheck OK")
+    return 0
+
+
 def run() -> None:
     """Launch the desktop app."""
+    if "--selfcheck" in sys.argv:
+        sys.exit(_selfcheck())
+
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
 
