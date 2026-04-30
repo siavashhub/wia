@@ -50,6 +50,26 @@ def _top_work_areas(entries: list[TimeEntry], limit: int = 5) -> list[WorkAreaSu
     return [WorkAreaSummary(label=k, hours=round(v, 2)) for k, v in items]
 
 
+def _matches_excluded(block: ActivityBlock, keywords_lower: list[str]) -> bool:
+    """Return True if any keyword (already lower-cased) is a substring of
+    the block's title or any participant identifier.
+
+    Inferred / gap-fill blocks are produced by WIA itself and have no
+    "real" subject — we never filter them out, so an exclusion rule
+    can't accidentally drop synthetic Admin/Focus time.
+    """
+    if block.source is Source.INFERRED:
+        return False
+    haystack = (block.title or "").lower()
+    if any(kw in haystack for kw in keywords_lower):
+        return True
+    for p in block.participants:
+        p_lower = p.lower()
+        if any(kw in p_lower for kw in keywords_lower):
+            return True
+    return False
+
+
 async def build_briefing(
     *,
     week_of: date | None = None,
@@ -102,6 +122,14 @@ async def build_briefing(
         signals = get_enabled_signals()
     log.info("Scanning enabled signals: %s", signals)
 
+    # Excluded keywords: case-insensitive substring match against block
+    # title and participants. Drives off the same prefs row the UI edits.
+    from wia.api.prefs import get_excluded_keywords
+
+    excluded_keywords = [kw.lower() for kw in get_excluded_keywords() if kw.strip()]
+    if excluded_keywords:
+        log.info("Excluding blocks matching keywords: %s", excluded_keywords)
+
     # 1. Fetch enabled signals from Work IQ MCP, in parallel.
     client = get_workiq_client()
     coros: list = []
@@ -140,6 +168,13 @@ async def build_briefing(
             workiq_failed = True
             continue
         raw_blocks.extend(res)
+
+    if excluded_keywords and raw_blocks:
+        before = len(raw_blocks)
+        raw_blocks = [b for b in raw_blocks if not _matches_excluded(b, excluded_keywords)]
+        dropped = before - len(raw_blocks)
+        if dropped:
+            log.info("Excluded %d/%d block(s) by keyword filter", dropped, before)
 
     if workiq_failed and not raw_blocks:
         return Briefing(

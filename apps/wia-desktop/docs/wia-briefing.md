@@ -46,6 +46,12 @@ Implemented in [`wia.core.orchestrator`](../src/wia/core/orchestrator.py):
 6. Persist into SQLite (`time_entry`) keyed by `(week_of, label)` so
    manual edits survive refresh.
 
+Between steps 1 and 2 the orchestrator drops any fetched block whose
+title or participant matches a user-configured **excluded keyword**
+(case-insensitive substring). Inferred Admin / Focus blocks are never
+filtered. Edit the list from the Briefing toolbar; it persists in
+`user_pref` and applies to the next scan.
+
 `refresh=false` short-circuits the pipeline and serves the last cached
 briefing for the requested week — Prev/Next navigation does not call
 Work IQ.
