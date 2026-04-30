@@ -58,10 +58,17 @@ jobs:
         # Imports the full app graph (FastAPI + MCP + jsonschema + ...) inside
         # the frozen exe and exits 0 on success. Catches missing PyInstaller
         # hidden imports / data files before we ship the installer.
+        # The exe is a Windows GUI subsystem binary, so it detaches from the
+        # PowerShell pipeline immediately; use Start-Process -Wait to block
+        # and capture the real exit code.
         shell: pwsh
         run: |
-          & "dist\wia-desktop\wia-desktop.exe" --selfcheck
-          if ($LASTEXITCODE -ne 0) { throw "Frozen app failed --selfcheck (exit $LASTEXITCODE)" }
+          $proc = Start-Process -FilePath "dist\wia-desktop\wia-desktop.exe" `
+            -ArgumentList "--selfcheck" -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -ne 0) {
+            throw "Frozen app failed --selfcheck (exit $($proc.ExitCode))"
+          }
+          Write-Host "Frozen app selfcheck passed."
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
