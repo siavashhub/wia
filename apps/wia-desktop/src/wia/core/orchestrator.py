@@ -32,11 +32,7 @@ def _totals(blocks: list[ActivityBlock]) -> BriefingTotals:
         for b in blocks
         if b.source is Source.INFERRED and (b.title or "").lower().startswith("focus")
     )
-    collab = sum(
-        b.duration_hours
-        for b in blocks
-        if b.source in {Source.TEAMS, Source.EMAIL}
-    )
+    collab = sum(b.duration_hours for b in blocks if b.source in {Source.TEAMS, Source.EMAIL})
     total = sum(b.duration_hours for b in blocks)
     return BriefingTotals(
         total_hours=round(total, 2),
@@ -88,7 +84,9 @@ async def build_briefing(
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -100,6 +98,7 @@ async def build_briefing(
     if signals is None:
         # Imported here to avoid a circular import at module load time.
         from wia.api.prefs import get_enabled_signals
+
         signals = get_enabled_signals()
     log.info("Scanning enabled signals: %s", signals)
 
@@ -122,7 +121,9 @@ async def build_briefing(
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -144,7 +145,9 @@ async def build_briefing(
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -200,9 +203,7 @@ def _totals_from_entries(entries: list[TimeEntry]) -> BriefingTotals:
     """
     meetings = sum(e.duration_hours for e in entries if e.confidence is Confidence.HIGH)
     collab = sum(e.duration_hours for e in entries if e.confidence is Confidence.MEDIUM)
-    focus = sum(
-        e.duration_hours for e in entries if (e.label or "").lower().startswith("focus")
-    )
+    focus = sum(e.duration_hours for e in entries if (e.label or "").lower().startswith("focus"))
     total = sum(e.duration_hours for e in entries)
     return BriefingTotals(
         total_hours=round(total, 2),

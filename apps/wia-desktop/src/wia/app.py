@@ -45,7 +45,6 @@ def create_app() -> FastAPI:
     app.include_router(prefs.router, prefix="/api/prefs", tags=["prefs"])
     app.include_router(review.router, prefix="/api/review", tags=["review"])
 
-
     if UI_DIR.exists():
         app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
 

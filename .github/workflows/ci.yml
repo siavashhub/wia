@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -66,7 +66,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-      - run: uv python install 3.11
+      - run: uv python install 3.12
       - run: uv sync
       - run: uv pip install pyinstaller
       - name: Build executable

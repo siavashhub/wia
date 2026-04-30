@@ -110,9 +110,7 @@ def delete_entry(entry_id: int) -> bool:
 def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
     """Delete non-edited entries for a week and insert fresh rows."""
     with get_session() as session:
-        existing = session.exec(
-            select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)
-        ).all()
+        existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
         for row in existing:
             if not row.user_edited:
                 session.delete(row)
@@ -132,9 +130,7 @@ def delete_week(week_of: str) -> int:
     a clean slate.
     """
     with get_session() as session:
-        rows = session.exec(
-            select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)
-        ).all()
+        rows = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
         count = len(rows)
         for row in rows:
             session.delete(row)

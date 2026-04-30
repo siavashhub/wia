@@ -2,7 +2,7 @@
 name = "wia"
 version = "0.0.0"
 description = "WIA monorepo workspace root"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = ["wia-desktop"]
 
 [tool.uv.workspace]
@@ -13,7 +13,7 @@ wia-desktop = { workspace = true }
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]

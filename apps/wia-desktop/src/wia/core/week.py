@@ -28,6 +28,5 @@ def week_days(monday: date, tzinfo=None) -> list[datetime]:
     if tzinfo is None:
         tzinfo = datetime.now().astimezone().tzinfo
     return [
-        datetime.combine(monday + timedelta(days=i), time(0, 0), tzinfo=tzinfo)
-        for i in range(7)
+        datetime.combine(monday + timedelta(days=i), time(0, 0), tzinfo=tzinfo) for i in range(7)
     ]

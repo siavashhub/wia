@@ -16,7 +16,7 @@ uv run wia-desktop              # launch the app locally
 uv run wia-mcp                  # launch the MCP server (stdio)
 ```
 
-CI runs on `windows-latest` against Python 3.11 and 3.12. Do not introduce
+CI runs on `windows-latest` against Python 3.12. Do not introduce
 Linux/macOS-only assumptions in runtime code.
 
 ## Repo layout

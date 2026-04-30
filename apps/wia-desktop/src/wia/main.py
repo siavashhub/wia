@@ -66,6 +66,7 @@ def _resolve_icon_path() -> str | None:
         if ico_path.exists() and ico_path.stat().st_mtime >= png_mtime:
             return str(ico_path)
         from PIL import Image  # type: ignore[import-not-found]
+
         img = Image.open(png_path).convert("RGBA")
         img.save(
             ico_path,
@@ -87,7 +88,8 @@ def _set_windows_app_user_model_id(app_id: str) -> None:
     if not sys.platform.startswith("win"):
         return
     try:
-        import ctypes  # noqa: PLC0415
+        import ctypes
+
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)  # type: ignore[attr-defined]
     except Exception as exc:
         log.debug("SetCurrentProcessExplicitAppUserModelID failed: %s", exc)

@@ -141,7 +141,11 @@ class WorkIQClient:
 
         We open a session per call for V1 simplicity; can be pooled later.
         """
-        async with self._lock, stdio_client(self._params) as (read, write), ClientSession(read, write) as session:
+        async with (
+            self._lock,
+            stdio_client(self._params) as (read, write),
+            ClientSession(read, write) as session,
+        ):
             await session.initialize()
             result = await session.call_tool(name, arguments=arguments)
 
@@ -177,7 +181,7 @@ class WorkIQClient:
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
             '"organizer":"email","participants":["email"],"isOnline":true}]}. '
             "Use ISO 8601 timestamps with timezone offsets. "
-            "If there are no events, return {\"events\":[]}."
+            'If there are no events, return {"events":[]}.'
         )
         try:
             payload = await self._call_tool("ask_work_iq", {"question": prompt})
@@ -213,7 +217,7 @@ class WorkIQClient:
             '{"events":[{"title":"<short topic>","start":"ISO8601","end":"ISO8601",'
             '"participants":["email"]}]}. '
             "Use ISO 8601 timestamps with timezone offsets. "
-            "If there is no Teams activity, return {\"events\":[]}."
+            'If there is no Teams activity, return {"events":[]}.'
         )
         try:
             payload = await self._call_tool("ask_work_iq", {"question": prompt})
@@ -226,9 +230,7 @@ class WorkIQClient:
         for ev in events:
             try:
                 blocks.append(
-                    _event_to_block(
-                        ev, source=Source.TEAMS, confidence=Confidence.MEDIUM
-                    )
+                    _event_to_block(ev, source=Source.TEAMS, confidence=Confidence.MEDIUM)
                 )
             except Exception as exc:
                 log.debug("Skipping malformed Teams event %s: %s", ev, exc)
@@ -253,7 +255,7 @@ class WorkIQClient:
             '{"events":[{"title":"<thread subject>","start":"ISO8601","end":"ISO8601",'
             '"participants":["email"]}]}. '
             "Use ISO 8601 timestamps with timezone offsets. "
-            "If there is no email activity, return {\"events\":[]}."
+            'If there is no email activity, return {"events":[]}.'
         )
         try:
             payload = await self._call_tool("ask_work_iq", {"question": prompt})
@@ -266,15 +268,12 @@ class WorkIQClient:
         for ev in events:
             try:
                 blocks.append(
-                    _event_to_block(
-                        ev, source=Source.EMAIL, confidence=Confidence.MEDIUM
-                    )
+                    _event_to_block(ev, source=Source.EMAIL, confidence=Confidence.MEDIUM)
                 )
             except Exception as exc:
                 log.debug("Skipping malformed email event %s: %s", ev, exc)
         log.info("Work IQ returned %d email blocks for %s..%s", len(blocks), start, end)
         return blocks
-
 
     async def probe(self) -> WorkIQStatus:
         """Quick check: is the Work IQ CLI installed and signed in?

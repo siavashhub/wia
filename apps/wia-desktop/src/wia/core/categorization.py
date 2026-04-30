@@ -32,7 +32,9 @@ def _classify_title(title: str, keyword_map: dict[str, str]) -> str | None:
     return None
 
 
-def _client_from_participants(participants: Iterable[str], internal_domains: set[str]) -> str | None:
+def _client_from_participants(
+    participants: Iterable[str], internal_domains: set[str]
+) -> str | None:
     external_domains: dict[str, int] = defaultdict(int)
     for email in participants:
         m = re.search(r"@([^>\s]+)", email)
