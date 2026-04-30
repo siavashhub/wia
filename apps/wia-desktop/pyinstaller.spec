@@ -19,6 +19,40 @@ extra_datas = [(str(SRC / "wia" / "ui"), "wia/ui")]
 extra_datas += collect_data_files("rfc3987_syntax")
 extra_datas += collect_data_files("jsonschema_specifications")
 
+
+def _build_app_icon() -> str | None:
+    """Convert ``ui/logo.png`` into a multi-size ``.ico`` for the Windows exe.
+
+    The Start-menu / taskbar / Desktop-shortcut icon comes from the icon
+    resource embedded in the .exe (Inno Setup shortcuts inherit it). The
+    repo only ships a PNG, so we generate the .ico under ``build/`` at
+    package time. Returns ``None`` if Pillow or the source PNG is missing,
+    which falls back to the default Python icon (the floppy).
+    """
+    png_path = SRC / "wia" / "ui" / "logo.png"
+    if not png_path.exists():
+        return None
+    out_dir = ROOT / "build" / "wia-icon"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ico_path = out_dir / "wia.ico"
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        img = Image.open(png_path).convert("RGBA")
+        img.save(
+            ico_path,
+            format="ICO",
+            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        )
+    except (OSError, ValueError):
+        return None
+    return str(ico_path)
+
+
+APP_ICON = _build_app_icon()
+
 a = Analysis(
     [str(SRC / "wia" / "main.py")],
     pathex=[str(SRC)],
@@ -57,7 +91,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,  # windowed app
-    icon=None,
+    icon=APP_ICON,
 )
 
 coll = COLLECT(
