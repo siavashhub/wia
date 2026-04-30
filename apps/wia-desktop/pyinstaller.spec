@@ -53,11 +53,9 @@ def _build_app_icon() -> str | None:
 
 APP_ICON = _build_app_icon()
 
-# Ship the .ico inside the bundle so the Inno Setup installer can use it as
-# an explicit IconFilename for shortcuts (more reliable than relying on the
-# embedded exe icon for Desktop shortcut resolution).
-if APP_ICON:
-    extra_datas.append((APP_ICON, "."))
+# Note: don't add APP_ICON to ``datas`` — in PyInstaller 6 onedir mode that
+# would land in ``_internal\`` rather than the app root. Inno Setup copies
+# the .ico from ``build/wia-icon/`` directly (see installer/wia.iss).
 
 a = Analysis(
     [str(SRC / "wia" / "main.py")],
