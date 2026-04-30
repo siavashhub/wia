@@ -5,17 +5,28 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 block_cipher = None
 
 ROOT = Path.cwd()
 SRC = ROOT / "apps" / "wia-desktop" / "src"
 
+# jsonschema (pulled in transitively via the `mcp` package) optionally loads
+# `rfc3987_syntax`, which ships a .lark grammar file that PyInstaller must
+# include as a data file. Without it the frozen app crashes on first import.
+extra_datas = [(str(SRC / "wia" / "ui"), "wia/ui")]
+extra_datas += collect_data_files("rfc3987_syntax")
+extra_datas += collect_data_files("jsonschema_specifications")
+
 a = Analysis(
     [str(SRC / "wia" / "main.py")],
     pathex=[str(SRC)],
     binaries=[],
-    datas=[(str(SRC / "wia" / "ui"), "wia/ui")],
+    datas=extra_datas,
     hiddenimports=[
+        "rfc3987_syntax",
+        *collect_submodules("rfc3987_syntax"),
         "wia.api.health",
         "wia.api.workiq",
         "wia.api.briefing",
