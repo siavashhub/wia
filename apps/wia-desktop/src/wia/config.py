@@ -24,13 +24,9 @@ class Settings(BaseSettings):
     # The CLI handles M365 authentication itself (first-party Entra app +
     # tenant admin consent). No app registration required from WIA.
     workiq_command: str = "npx"
-    workiq_args: list[str] = Field(
-        default_factory=lambda: ["-y", "@microsoft/workiq", "mcp"]
-    )
+    workiq_args: list[str] = Field(default_factory=lambda: ["-y", "@microsoft/workiq", "mcp"])
     # Used to verify Work IQ is installed (and trigger first-run auth on demand).
-    workiq_cli_args: list[str] = Field(
-        default_factory=lambda: ["-y", "@microsoft/workiq"]
-    )
+    workiq_cli_args: list[str] = Field(default_factory=lambda: ["-y", "@microsoft/workiq"])
 
     # UI
     window_title: str = "WIA — Work Intelligence Agent"

@@ -191,11 +191,7 @@ def _load(start: date, end: date) -> list[TimeEntry]:
     start_iso = start.isoformat()
     end_iso = end.isoformat()
     for entry in raw:
-        days_in = {
-            d: h
-            for d, h in (entry.daily_hours or {}).items()
-            if start_iso <= d <= end_iso
-        }
+        days_in = {d: h for d, h in (entry.daily_hours or {}).items() if start_iso <= d <= end_iso}
         if not days_in and entry.week_of and start_iso <= entry.week_of <= end_iso:
             # No per-day breakdown but the whole week sits inside the range —
             # keep the entry with its bulk duration so it still counts.
@@ -205,9 +201,7 @@ def _load(start: date, end: date) -> list[TimeEntry]:
             continue
         clipped_total = round(sum(days_in.values()), 4)
         trimmed.append(
-            entry.model_copy(
-                update={"duration_hours": clipped_total, "daily_hours": days_in}
-            )
+            entry.model_copy(update={"duration_hours": clipped_total, "daily_hours": days_in})
         )
     return trimmed
 
@@ -235,9 +229,7 @@ def _totals(period_entries: list[TimeEntry]) -> ReviewTotals:
     total = sum(e.duration_hours for e in period_entries)
     meetings = sum(e.duration_hours for e in period_entries if _is_meeting(e))
     focus = sum(e.duration_hours for e in period_entries if _is_focus(e))
-    collab = sum(
-        e.duration_hours for e in period_entries if _is_meeting(e) and _is_collab(e)
-    )
+    collab = sum(e.duration_hours for e in period_entries if _is_meeting(e) and _is_collab(e))
     weeks = len({e.week_of for e in period_entries if e.week_of})
     ratio = meetings / total if total else 0.0
     return ReviewTotals(
@@ -250,9 +242,7 @@ def _totals(period_entries: list[TimeEntry]) -> ReviewTotals:
     )
 
 
-def _categories(
-    period_entries: list[TimeEntry], total_hours: float
-) -> list[CategoryBreakdown]:
+def _categories(period_entries: list[TimeEntry], total_hours: float) -> list[CategoryBreakdown]:
     bucket: dict[str, list[TimeEntry]] = defaultdict(list)
     for e in period_entries:
         bucket[e.category or "Uncategorized"].append(e)
@@ -292,9 +282,7 @@ def _top_labels(period_entries: list[TimeEntry], *, limit: int) -> list[TopLabel
     return rows[:limit]
 
 
-def _weekly_trend(
-    period_entries: list[TimeEntry], start: date, end: date
-) -> list[WeeklyPoint]:
+def _weekly_trend(period_entries: list[TimeEntry], start: date, end: date) -> list[WeeklyPoint]:
     by_week_total: dict[str, float] = defaultdict(float)
     by_week_meetings: dict[str, float] = defaultdict(float)
     by_week_focus: dict[str, float] = defaultdict(float)
@@ -381,10 +369,7 @@ def _insights(
             Insight(
                 kind="balance",
                 title="Heavy meeting load",
-                detail=(
-                    f"{pct:.0f}% of your time was in meetings "
-                    f"({totals.meetings_hours:.0f}h)."
-                ),
+                detail=(f"{pct:.0f}% of your time was in meetings ({totals.meetings_hours:.0f}h)."),
                 metric=pct,
             )
         )
@@ -505,8 +490,6 @@ def _talking_points(
             )
         )
     if not any(p.section == "asks" for p in points):
-        points.append(
-            TalkingPoint(section="asks", text="Anything you'd like more support on?")
-        )
+        points.append(TalkingPoint(section="asks", text="Anything you'd like more support on?"))
 
     return points

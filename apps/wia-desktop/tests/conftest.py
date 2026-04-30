@@ -1,4 +1,5 @@
 """Pytest configuration."""
+
 import os
 import tempfile
 from pathlib import Path

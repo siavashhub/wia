@@ -44,38 +44,48 @@ def _seed_march_data() -> None:
     week_a = "2026-03-02"  # Mon Mar 2
     week_b = "2026-03-09"  # Mon Mar 9
 
-    entries_repo.create_entry(_make(
-        label="Client A — discovery",
-        category="Client A",
-        week_of=week_a,
-        daily={"2026-03-02": 4.0, "2026-03-03": 4.0, "2026-03-04": 2.0},
-    ))
-    entries_repo.create_entry(_make(
-        label="Focus time",
-        category="Admin",
-        week_of=week_a,
-        daily={"2026-03-04": 4.0, "2026-03-05": 6.0, "2026-03-06": 2.0},
-        confidence=Confidence.LOW,
-    ))
-    entries_repo.create_entry(_make(
-        label="Sprint review / sync",
-        category="Client A",
-        week_of=week_a,
-        daily={"2026-03-06": 1.0},
-    ))
+    entries_repo.create_entry(
+        _make(
+            label="Client A — discovery",
+            category="Client A",
+            week_of=week_a,
+            daily={"2026-03-02": 4.0, "2026-03-03": 4.0, "2026-03-04": 2.0},
+        )
+    )
+    entries_repo.create_entry(
+        _make(
+            label="Focus time",
+            category="Admin",
+            week_of=week_a,
+            daily={"2026-03-04": 4.0, "2026-03-05": 6.0, "2026-03-06": 2.0},
+            confidence=Confidence.LOW,
+        )
+    )
+    entries_repo.create_entry(
+        _make(
+            label="Sprint review / sync",
+            category="Client A",
+            week_of=week_a,
+            daily={"2026-03-06": 1.0},
+        )
+    )
 
-    entries_repo.create_entry(_make(
-        label="Client A — delivery",
-        category="Client A",
-        week_of=week_b,
-        daily={"2026-03-09": 6.0, "2026-03-10": 6.0, "2026-03-11": 6.0},
-    ))
-    entries_repo.create_entry(_make(
-        label="Project X kickoff",
-        category="Project X",
-        week_of=week_b,
-        daily={"2026-03-12": 4.0, "2026-03-13": 4.0},
-    ))
+    entries_repo.create_entry(
+        _make(
+            label="Client A — delivery",
+            category="Client A",
+            week_of=week_b,
+            daily={"2026-03-09": 6.0, "2026-03-10": 6.0, "2026-03-11": 6.0},
+        )
+    )
+    entries_repo.create_entry(
+        _make(
+            label="Project X kickoff",
+            category="Project X",
+            week_of=week_b,
+            daily={"2026-03-12": 4.0, "2026-03-13": 4.0},
+        )
+    )
 
 
 def test_parse_period_accepts_year_and_month() -> None:
@@ -130,12 +140,14 @@ def test_monthly_review_no_data_returns_empty_review() -> None:
 def test_yearly_review_includes_both_months() -> None:
     _seed_march_data()
     # Add one week in February 2026.
-    entries_repo.create_entry(_make(
-        label="Internal — planning",
-        category="Internal",
-        week_of="2026-02-23",  # Mon Feb 23
-        daily={"2026-02-23": 4.0, "2026-02-24": 4.0, "2026-02-25": 2.0},
-    ))
+    entries_repo.create_entry(
+        _make(
+            label="Internal — planning",
+            category="Internal",
+            week_of="2026-02-23",  # Mon Feb 23
+            daily={"2026-02-23": 4.0, "2026-02-24": 4.0, "2026-02-25": 2.0},
+        )
+    )
     rv = review_core.build_yearly_review(2026)
     assert rv.status == "ok"
     assert rv.period_kind == "year"

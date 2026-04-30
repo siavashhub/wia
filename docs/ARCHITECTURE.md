@@ -9,16 +9,19 @@
 ┌──────────────────────▼─────────────────────────┐
 │ FastAPI in-process                             │
 │  ├─ /api/health, /api/workiq, /api/briefing,   │
-│  │  /api/entries, /api/export                  │
+│  │  /api/entries, /api/prefs, /api/review,     │
+│  │  /api/schedule, /api/export                 │
 │  ├─ core.orchestrator (Work IQ → blocks →      │
-│  │  entries; grouping + categorization)        │
-│  └─ SQLite (activity_block, time_entry, prefs) │
+│  │  entries; grouping + categorization;        │
+│  │  cache-aware on refresh=false)              │
+│  └─ SQLite (time_entry, user_pref, scan_history)│
 └────────┬───────────────────────────────────────┘
          │ MCP stdio (spawns Node child process)
 ┌────────▼──────────────────────────────────────┐
 │ @microsoft/workiq (Node, MCP server mode)     │
 │  • Owns its own M365 auth (first-party Entra) │
-│  • Talks to Microsoft Copilot → Graph         │
+│  • Single tool: ask_work_iq (NL → Copilot)    │
+│  • WIA prompts for calendar / Teams / email   │
 └───────────────────────────────────────────────┘
 
          ▲
@@ -35,14 +38,24 @@
 | --- | --- |
 | `wia.main` | pywebview + FastAPI lifecycle |
 | `wia.app` | FastAPI factory & routing |
-| `wia.api.*` | HTTP endpoints (`workiq` status/enable, briefing, entries, export) |
-| `wia.core.types` | Pydantic domain models |
-| `wia.core.grouping` | Merge / gap-fill activity blocks |
-| `wia.core.categorization` | Rule-based labeling |
-| `wia.core.orchestrator` | End-to-end briefing build |
+| `wia.api.health` | Liveness probe |
+| `wia.api.workiq` | Work IQ CLI status / install / enable endpoints |
+| `wia.api.briefing` | `GET /api/briefing` and `POST /api/briefing/regenerate` |
+| `wia.api.entries` | CRUD for `TimeEntry` rows (manual edits) |
+| `wia.api.prefs` | User prefs (enabled signals, internal domains, keyword map) |
+| `wia.api.review` | Weekly review summary endpoint |
+| `wia.api.schedule` | Scheduler config + run-now + scan history |
+| `wia.api.export` | CSV / Markdown / HTML / clipboard exports |
+| `wia.core.types` | Pydantic domain models (`ActivityBlock`, `TimeEntry`, `Briefing`, `Confidence`, `Source`) |
+| `wia.core.week` | Mon–Sun week math and weekday iteration |
+| `wia.core.grouping` | Merge adjacent same-source blocks; gap-fill weekday Admin/Focus |
+| `wia.core.categorization` | Rule-based labeling (external-domain → client, keyword fallback) |
+| `wia.core.orchestrator` | End-to-end briefing build (cache-aware) |
+| `wia.core.scheduler` | Background weekly scan trigger |
+| `wia.core.review` | Weekly review aggregation |
 | `wia.mcp_clients.workiq` | Work IQ MCP stdio client + CLI probe/enable |
-| `wia.mcp_server.server` | WIA's exposed MCP server |
-| `wia.storage` | SQLite persistence |
+| `wia.mcp_server.server` | WIA's exposed MCP server (`wia-mcp`) |
+| `wia.storage` | SQLite persistence (`entries`, `prefs`, `scan_history`) |
 
 ## Authentication
 
@@ -50,17 +63,33 @@ WIA does **no** M365 sign-in. The `@microsoft/workiq` CLI handles auth via Micro
 
 ## Data flow (briefing)
 
-1. UI calls `GET /api/briefing?refresh=true`.
-2. Orchestrator computes Mon–Fri bounds.
-3. Work IQ MCP client spawns the Node server, calls `calendar.list`.
-4. Events normalize → `ActivityBlock` (HIGH confidence, source=CALENDAR).
-5. `grouping.merge_blocks` collapses adjacencies; `fill_gaps` adds inferred Admin/Focus blocks (LOW).
-6. `categorization.aggregate_entries` produces grouped `TimeEntry` rows (label, category, hours, confidence).
-7. Repository persists entries for the week (preserves user-edited rows).
-8. Briefing payload returns to UI: totals, top areas, entries, blocks.
+1. UI calls `GET /api/briefing?refresh=<bool>&week_of=<YYYY-MM-DD>`.
+2. Orchestrator computes the Mon–Sun bounds for the requested week.
+3. **Cache short-circuit**: when `refresh=false`, the orchestrator never spawns Work IQ. If cached entries exist for the week it returns them with `status=ok`; otherwise it returns an empty `status=no-signals` briefing so the UI can show the empty state. This keeps Prev/Next navigation cheap.
+4. On `refresh=true`, the orchestrator reads the user's enabled signals from prefs (`calendar`, `teams`, `email`) and fans out parallel calls to the Work IQ MCP client via `asyncio.gather`.
+5. The MCP client spawns `@microsoft/workiq mcp` over stdio. Work IQ exposes a single natural-language tool, `ask_work_iq`. WIA sends one prompt per signal (calendar / Teams / email) that demands a strict JSON shape, then `json.loads` the text content of the response.
+6. Each parsed event is normalized to an `ActivityBlock`:
+   - Calendar → `source=CALENDAR`, `confidence=HIGH`.
+   - Teams → `source=TEAMS`, `confidence=MEDIUM`.
+   - Email → `source=EMAIL`, `confidence=MEDIUM`.
+   Malformed events are dropped individually. If every signal raised, the briefing returns `status=workiq-not-enabled`.
+7. `grouping.merge_blocks` collapses adjacent same-source same-title blocks (gap ≤ 5 min), unioning participants. Then — only if at least one real block exists, and only on weekdays (Mon–Fri) — `grouping.fill_gaps` inserts inferred `Admin / Follow-up` and `Focus time` blocks (`source=INFERRED`, `confidence=LOW`) inside the 09:00–17:00 local window.
+8. `categorization.aggregate_entries` buckets blocks by `(label, category)`:
+   - External email domain (any participant whose domain is **not** in `internal_domains`) wins as the category, e.g. `client-a.com` → `Client A`.
+   - Otherwise the title is matched against the keyword map (`sprint→Internal`, `design review→Design`, …).
+   - Inferred blocks become `Admin` category entries.
+   Each entry's confidence is the **lowest** of its constituent blocks (HIGH > MEDIUM > LOW).
+9. `entries_repo.replace_week` deletes only **non-user-edited** rows for the week and inserts the fresh aggregation; manual edits survive untouched.
+10. The orchestrator re-reads entries, computes `BriefingTotals` and top work areas, and returns the `Briefing` payload to the UI.
+
+When the briefing is served from cache (no live blocks), totals are derived from entry confidence: `HIGH→meetings`, `MEDIUM→collaboration`, `LOW`/label-prefix `focus→focus`.
 
 ## Confidence scoring
 
-- HIGH — explicit calendar event.
-- MEDIUM — multi-signal inference (reserved for Phase 2 with Teams/email).
-- LOW — gap-fill inference (Admin / Focus time).
+| Level | Meaning | Source |
+| --- | --- | --- |
+| `HIGH` | Explicit calendar event | `Source.CALENDAR` |
+| `MEDIUM` | Inferred from collaboration signal (Teams chats/calls, substantive email threads) | `Source.TEAMS`, `Source.EMAIL` |
+| `LOW` | Gap-fill inference (`Admin / Follow-up`, `Focus time`) | `Source.INFERRED` |
+
+`TimeEntry.confidence` collapses to the lowest level among its constituent blocks, so a calendar meeting that picked up a co-occurring Teams thread reports `MEDIUM`. Cached briefings use confidence as the source proxy because `TimeEntry` rows don't persist `Source`.

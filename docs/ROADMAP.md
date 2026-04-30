@@ -1,15 +1,13 @@
 # Roadmap
 
 ## V1 — WIA Briefing (MVP) ← in progress
-- Calendar ingestion via Work IQ MCP
+- Calendar, Teams and Email ingestion via Work IQ MCP
 - Rule-based grouping + categorization
 - Editable weekly summary
 - CSV / clipboard export
 - pywebview desktop app, GitHub Releases distribution
 
 ## Phase 2
-- Teams calls + email signal fusion
-- React + Vite UI migration (shadcn/ui)
 - MSIX packaging + winget submission
 - Bundled Node.js (no external prereq)
 - WIA Insights — patterns and recommendations

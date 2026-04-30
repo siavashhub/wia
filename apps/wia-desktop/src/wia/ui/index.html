@@ -6,14 +6,59 @@
     <title>WIA — Work Intelligence Agent</title>
     <link rel="icon" type="image/png" href="/static/logo.png" />
     <link rel="stylesheet" href="/static/styles.css" />
+    <!-- Inline boot styles: applied before Tailwind CDN finishes parsing so
+         the WebView paints our background + splash instead of a white flash. -->
+    <style>
+      html, body { margin: 0; background: #f8fafc; color: #0f172a; }
+      @media (prefers-color-scheme: dark) {
+        html:not(.light), body:not(.light) { background: #020617; color: #f1f5f9; }
+      }
+      html.dark, html.dark body { background: #020617; color: #f1f5f9; }
+      [x-cloak] { display: none !important; }
+      #wia-splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 0.75rem;
+        background: inherit;
+        transition: opacity 220ms ease-out;
+      }
+      #wia-splash.wia-fade { opacity: 0; pointer-events: none; }
+      #wia-splash img {
+        width: 64px; height: 64px; border-radius: 12px;
+        animation: wia-splash-pulse 1.4s ease-in-out infinite;
+      }
+      #wia-splash .wia-splash-title {
+        font: 600 14px/1.2 -apple-system, "Segoe UI", system-ui, sans-serif;
+        letter-spacing: 0.02em; opacity: 0.7;
+      }
+      @keyframes wia-splash-pulse {
+        0%, 100% { transform: scale(1);    opacity: 0.85; }
+        50%      { transform: scale(1.06); opacity: 1; }
+      }
+    </style>
     <!-- Tailwind CDN: enable dark-mode-by-class BEFORE the runtime loads. -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = { darkMode: 'class' };
+      // Best-effort: pick up the user's previously persisted theme before
+      // Alpine boots so the splash matches their dark/light preference and
+      // we don't flash light → dark when Alpine finally hydrates prefs.
+      try {
+        const stored = window.localStorage && window.localStorage.getItem('wia-theme');
+        if (stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) { /* non-fatal */ }
     </script>
+    <script src="/static/icons.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
   <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100" x-data="wia()" x-init="init()">
+    <!-- Splash: removed by Alpine after the first briefing fetch resolves. -->
+    <div id="wia-splash" x-show="bootingBriefing()" x-transition.opacity.duration.250ms>
+      <img src="/static/logo.png" alt="WIA" />
+      <div class="wia-splash-title">Loading WIA…</div>
+    </div>
     <header class="border-b bg-white dark:border-slate-800 dark:bg-slate-900">
       <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
         <div class="flex items-center gap-3">
@@ -28,25 +73,25 @@
               role="tab"
               @click="setView('briefing')"
               :class="view === 'briefing' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-              class="rounded-md px-3 py-1 text-xs"
-            >🗓 Briefing</button>
+              class="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs"
+            ><span x-html="icon('calendar-days', 'h-3.5 w-3.5')"></span><span>Briefing</span></button>
             <button
               type="button"
               role="tab"
               @click="setView('review')"
               :class="view === 'review' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-              class="rounded-md px-3 py-1 text-xs"
-            >🧠 Review</button>
+              class="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs"
+            ><span x-html="icon('light-bulb', 'h-3.5 w-3.5')"></span><span>Review</span></button>
           </nav>
         </div>
         <div class="flex items-center gap-3 text-sm">
           <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
-            <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">☀ Light</button>
-            <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">🌙 Dark</button>
-            <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-1 text-xs">🖥 Auto</button>
+            <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('sun', 'h-3.5 w-3.5')"></span><span>Light</span></button>
+            <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('moon', 'h-3.5 w-3.5')"></span><span>Dark</span></button>
+            <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
           </div>
           <template x-if="workiq.ready">
-            <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">✓ Work IQ connected</span>
+            <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"><span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Work IQ connected</span></span>
           </template>
           <template x-if="!workiq.ready">
             <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
@@ -60,31 +105,90 @@
     <main class="mx-auto max-w-7xl px-6 py-6 space-y-6">
       <!-- Briefing view ------------------------------------------------- -->
       <div x-show="view === 'briefing'" class="space-y-6">
-      <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" :aria-busy="loading ? 'true' : 'false'">
-        <div x-show="loading" x-cloak class="-mx-6 -mt-6 mb-4 px-6 pt-1">
+      <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" :aria-busy="(loading || isScanningCurrent() || bootingBriefing()) ? 'true' : 'false'">
+        <div x-show="loading || isScanningCurrent() || bootingBriefing()" x-cloak class="-mx-6 -mt-6 mb-4 px-6 pt-1">
           <div class="wia-progress-track"><div class="wia-progress-bar"></div></div>
         </div>
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2">
-              <button @click="prevWeek()" :disabled="!canGoBack()" class="rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">‹</button>
+              <button @click="prevWeek()" :disabled="!canGoBack()" aria-label="Previous week" class="inline-flex items-center rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"><span x-html="icon('chevron-left', 'h-4 w-4')"></span></button>
               <h2 class="text-xl font-semibold">Week of <span x-text="weekLabel()"></span></h2>
-              <button @click="nextWeek()" :disabled="!canGoForward()" class="rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800">›</button>
+              <button @click="nextWeek()" :disabled="!canGoForward()" aria-label="Next week" class="inline-flex items-center rounded border px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"><span x-html="icon('chevron-right', 'h-4 w-4')"></span></button>
               <button @click="goCurrentWeek()" x-show="weekOffset !== 0" class="ml-2 rounded border px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">This week</button>
             </div>
             <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
-              <template x-if="briefing">
+              <template x-if="bootingBriefing()">
+                <span class="inline-block h-4 w-72 align-middle wia-skeleton"></span>
+              </template>
+              <template x-if="briefing && hasEntries() && !isScanningCurrent()">
                 <span>You logged <strong x-text="briefing.totals.total_hours.toFixed(1)"></strong> hours across <span x-text="briefing.entries.length"></span> activities.</span>
               </template>
-              <template x-if="briefing && briefing.status === 'no-signals'">
-                <span class="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">No signals from Work IQ for this week.</span>
+              <template x-if="briefing && !hasEntries() && !loading && !isScanningCurrent()">
+                <span class="text-slate-500 dark:text-slate-400">No activity yet for this week.</span>
+              </template>
+              <template x-if="isScanningCurrent()">
+                <span class="text-indigo-600 dark:text-indigo-400">Scanning Work IQ for this week's signals…</span>
+              </template>
+              <template x-if="loading && !isScanningCurrent() && !bootingBriefing()">
+                <span class="text-indigo-600 dark:text-indigo-400">Loading…</span>
+              </template>
+              <template x-if="schedule.last_scan_at && !bootingBriefing() && !loading && !isScanningCurrent()">
+                <span class="ml-2 text-xs text-slate-500 dark:text-slate-400">· last scan <span x-text="timeAgo(schedule.last_scan_at)"></span></span>
               </template>
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button @click="rescan()" :disabled="loading" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
-              <span x-text="loading ? 'Scanning…' : ((briefing && briefing.entries && briefing.entries.length) ? '🔎 Rescan' : '🔎 Scan')"></span>
-            </button>
+            <div class="relative inline-flex" x-data="{ scanMenuOpen: false }" @keydown.escape.window="scanMenuOpen = false" @click.outside="scanMenuOpen = false">
+              <button
+                @click="rescan()"
+                :disabled="scanningBriefing"
+                :class="(hasEntries() && !bootingBriefing()) ? 'rounded-l' : 'rounded'"
+                class="inline-flex items-center gap-1 bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <template x-if="!scanningBriefing">
+                  <span class="inline-flex items-center gap-1"><span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span x-text="(briefing && briefing.entries && briefing.entries.length) ? 'Rescan' : 'Scan'"></span></span>
+                </template>
+                <template x-if="scanningBriefing">
+                  <span x-text="isScanningCurrent() ? 'Scanning…' : ('Scanning week of ' + scanningWeekIso + '…')"></span>
+                </template>
+              </button>
+              <button
+                x-show="hasEntries() && !bootingBriefing()"
+                type="button"
+                @click="scanMenuOpen = !scanMenuOpen"
+                :disabled="scanningBriefing || clearingWeek"
+                :aria-expanded="scanMenuOpen ? 'true' : 'false'"
+                aria-haspopup="menu"
+                aria-label="More scan actions"
+                class="inline-flex items-center rounded-r border-l border-indigo-700 bg-indigo-600 px-2 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <span x-html="icon('chevron-down', 'h-4 w-4')"></span>
+              </button>
+              <div
+                x-show="scanMenuOpen"
+                x-cloak
+                x-transition.opacity
+                role="menu"
+                class="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded border bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  @click="scanMenuOpen = false; clearWeek()"
+                  :disabled="scanningBriefing || clearingWeek"
+                  class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/40"
+                  title="Delete every entry stored for this week (including manual edits)"
+                >
+                  <template x-if="!clearingWeek">
+                    <span class="inline-flex items-center gap-2"><span x-html="icon('trash', 'h-4 w-4')"></span><span>Clear week</span></span>
+                  </template>
+                  <template x-if="clearingWeek">
+                    <span>Clearing…</span>
+                  </template>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -102,22 +206,97 @@
                   (prefs.enabled_signals || []).includes(sig.key)
                     ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700'
                     : 'text-slate-600 opacity-70 hover:opacity-100 dark:text-slate-300',
-                  (loading && (prefs.enabled_signals || []).includes(sig.key)) ? 'scan-pending' : ''
+                  (isScanningCurrent() && (prefs.enabled_signals || []).includes(sig.key)) ? 'scan-pending' : ''
                 ]"
-                class="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                class="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
               >
+                <span x-html="icon(sig.icon, 'h-3.5 w-3.5')"></span>
                 <span x-text="sig.label"></span>
               </button>
             </template>
           </div>
         </div>
 
+        <!-- Excluded keywords ----------------------------------------------- -->
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">Exclude keywords:</span>
+          <div class="flex flex-wrap items-center gap-1">
+            <template x-for="kw in (prefs.excluded_keywords || [])" :key="'kw-' + kw">
+              <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                <span x-text="kw"></span>
+                <button
+                  type="button"
+                  class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                  @click="removeExcludedKeyword(kw)"
+                  :aria-label="'Remove ' + kw"
+                  title="Remove"
+                >&times;</button>
+              </span>
+            </template>
+            <template x-if="!(prefs.excluded_keywords && prefs.excluded_keywords.length)">
+              <span class="text-slate-400 dark:text-slate-500">None</span>
+            </template>
+          </div>
+          <form class="inline-flex items-center gap-1" @submit.prevent="addExcludedKeyword()">
+            <input
+              type="text"
+              x-model="newExcludedKeyword"
+              placeholder="Town Hall, Community Call, 1:1"
+              maxlength="100"
+              class="w-40 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+              :aria-label="'Add excluded keyword'"
+            />
+            <button
+              type="submit"
+              :disabled="!newExcludedKeyword || !newExcludedKeyword.trim()"
+              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
+            >Add</button>
+          </form>
+          <span x-show="(prefs.excluded_keywords || []).length" class="text-slate-400 dark:text-slate-500">
+            · applies to the next scan
+          </span>
+        </div>
+        <div x-show="isScanningCurrent()" x-cloak class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
+          <span class="font-medium text-indigo-600 dark:text-indigo-400">Scanning:</span>
+          <template x-for="key in (prefs.enabled_signals || [])" :key="'scanning-' + key">
+            <span class="inline-flex items-center">
+              <span class="wia-pulse-dot"></span>
+              <span x-text="(availableSignals.find(s => s.key === key) || {}).label || key"></span>
+            </span>
+          </template>
+          <span class="text-slate-500 dark:text-slate-400">· Microsoft Copilot can take 20–60s to answer</span>
+        </div>
+
+        <!-- Background scan banner: shown when a scan is running for a week
+             other than the one the user is currently viewing. -->
+        <div
+          x-show="scanningBriefing && !isScanningCurrent()"
+          x-cloak
+          class="mt-3 flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"
+        >
+          <span class="wia-pulse-dot"></span>
+          <span>
+            Scanning week of <strong x-text="scanningWeekIso"></strong> in the background…
+            <button class="ml-1 underline" @click="goToScanningWeek()">jump to it</button>
+          </span>
+        </div>
+
         <template x-if="briefing">
-          <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 transition-opacity" :class="loading ? 'animate-pulse opacity-70' : ''">
+          <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 transition-opacity" :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
             <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Meetings</div><div class="text-lg font-semibold" x-text="briefing.totals.meetings_hours + 'h'"></div></div>
             <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Focus</div><div class="text-lg font-semibold" x-text="briefing.totals.focus_hours + 'h'"></div></div>
             <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Collaboration</div><div class="text-lg font-semibold" x-text="briefing.totals.collaboration_hours + 'h'"></div></div>
             <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Total</div><div class="text-lg font-semibold" x-text="briefing.totals.total_hours + 'h'"></div></div>
+          </div>
+        </template>
+        <template x-if="bootingBriefing()">
+          <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <template x-for="n in [1,2,3,4]" :key="'totskel-' + n">
+              <div class="rounded border p-3 dark:border-slate-700">
+                <div class="h-3 w-16 wia-skeleton"></div>
+                <div class="mt-2 h-5 w-12 wia-skeleton"></div>
+              </div>
+            </template>
           </div>
         </template>
       </section>
@@ -153,7 +332,7 @@
         </div>
         <div class="mt-3 border-t pt-3 dark:border-slate-700">
           <button @click="toggleHistory()" class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
-            <span x-text="historyOpen ? '▾' : '▸'"></span>
+            <span x-html="icon(historyOpen ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
             <span>Scan history</span>
           </button>
           <div x-show="historyOpen" x-cloak class="mt-3">
@@ -240,7 +419,7 @@
                           <template x-if="row.kind === 'group'">
                             <td class="text-center align-middle">
                               <button @click="toggleHistoryWeek(g.week_of)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(historyExpandedWeeks[g.week_of] ? 'Collapse ' : 'Expand ') + g.week_of">
-                                <span x-text="historyExpandedWeeks[g.week_of] ? '▼' : '▶'"></span>
+                                <span x-html="icon(historyExpandedWeeks[g.week_of] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
                               </button>
                             </td>
                           </template>
@@ -306,7 +485,7 @@
         </div>
       </section>
 
-      <section x-show="briefing?.top_work_areas?.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 transition-opacity" :class="loading ? 'animate-pulse opacity-70' : ''">
+      <section x-show="briefing?.top_work_areas?.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 transition-opacity" :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
         <h3 class="font-semibold">Top work areas</h3>
         <ul class="mt-3 space-y-1 text-sm">
           <template x-for="area in briefing.top_work_areas" :key="area.label">
@@ -322,10 +501,15 @@
             <button @click="expandAll()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400" x-text="allExpanded() ? 'Collapse all' : 'Expand all'"></button>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button @click="copyTable()" class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
-              <span x-text="copied ? '✓ Copied' : '📋 Copy as table'"></span>
+            <button @click="copyTable()" class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+              <template x-if="copied">
+                <span class="inline-flex items-center gap-1"><span x-html="icon('check', 'h-4 w-4')"></span><span>Copied</span></span>
+              </template>
+              <template x-if="!copied">
+                <span class="inline-flex items-center gap-1"><span x-html="icon('clipboard-document', 'h-4 w-4')"></span><span>Copy as table</span></span>
+              </template>
             </button>
-            <button @click="downloadCsv()" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">⬇️ Export CSV</button>
+            <button @click="downloadCsv()" class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"><span x-html="icon('arrow-down-tray', 'h-4 w-4')"></span><span>Export CSV</span></button>
           </div>
         </div>
 
@@ -347,7 +531,7 @@
                 <th class="w-12"></th>
               </tr>
             </thead>
-            <tbody :class="loading ? 'animate-pulse opacity-70' : ''">
+            <tbody :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
               <template x-for="group in groupedEntries()" :key="group.category">
                 <template x-for="row in groupRows(group)" :key="row.key">
                   <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : '')">
@@ -355,7 +539,7 @@
                     <td class="text-center align-middle">
                       <template x-if="row.kind === 'group'">
                         <button @click="toggleGroup(group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[group.category] ? 'Collapse ' : 'Expand ') + group.category">
-                          <span x-text="expanded[group.category] ? '▼' : '▶'"></span>
+                          <span x-html="icon(expanded[group.category] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
                         </button>
                       </template>
                     </td>
@@ -392,14 +576,78 @@
                     <!-- Delete -->
                     <td class="text-center">
                       <template x-if="row.kind === 'sub'">
-                        <button class="text-xs text-red-600 hover:underline" @click="deleteEntry(row.entry)">×</button>
+                        <button class="text-red-600 hover:text-red-700" :aria-label="'Delete entry ' + (row.entry.label || '')" @click="deleteEntry(row.entry)"><span x-html="icon('x-mark', 'h-4 w-4')"></span></button>
                       </template>
                     </td>
                   </tr>
                 </template>
               </template>
               <template x-if="!briefing?.entries?.length">
-                <tr><td :colspan="5 + dayLabels.length" class="py-6 text-center text-slate-500 dark:text-slate-400">No entries yet. Click Rescan.</td></tr>
+                <tr>
+                  <td :colspan="5 + dayLabels.length" class="py-0">
+                    <!-- Skeleton rows during the very first paint -->
+                    <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
+                      <div class="space-y-2 py-4">
+                        <template x-for="n in [1,2,3,4,5]" :key="'rowskel-' + n">
+                          <div class="flex items-center gap-3 px-1">
+                            <div class="h-4 w-24 wia-skeleton"></div>
+                            <div class="h-4 flex-1 wia-skeleton"></div>
+                            <div class="h-4 w-12 wia-skeleton"></div>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+
+                    <!-- State-aware empty card -->
+                    <template x-if="briefing && !loading && !isScanningCurrent()">
+                      <div class="py-8 text-center">
+                        <!-- A. Work IQ not connected -->
+                        <template x-if="!workiq.ready">
+                          <div>
+                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:link', 'h-10 w-10')"></div>
+                            <h4 class="mt-2 font-semibold">Connect Work IQ to scan your week</h4>
+                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                              WIA reads your calendar, Teams, and email through the Microsoft Work IQ CLI.
+                              You'll be prompted to sign in once.
+                            </p>
+                            <button @click="enableWorkIQ()" :disabled="enabling" class="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
+                              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+                            </button>
+                          </div>
+                        </template>
+                        <!-- B. First run: connected, but never scanned -->
+                        <template x-if="workiq.ready && isFirstRun()">
+                          <div>
+                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-indigo-500" x-html="icon('outline:rocket-launch', 'h-10 w-10')"></div>
+                            <h4 class="mt-2 font-semibold">Ready for your first scan</h4>
+                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                              WIA hasn't scanned this week yet. Tap below to pull
+                              your <span x-text="(prefs.enabled_signals || []).join(' · ') || 'enabled signals'"></span>
+                              from Work IQ. Usually takes 20–60 seconds.
+                            </p>
+                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700">
+                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Run first scan</span>
+                            </button>
+                          </div>
+                        </template>
+                        <!-- C. Connected, prior scans exist, but this week has no activity -->
+                        <template x-if="workiq.ready && !isFirstRun()">
+                          <div>
+                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:calendar-days', 'h-10 w-10')"></div>
+                            <h4 class="mt-2 font-semibold">No activity recorded for this week</h4>
+                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                              <!-- Last scan was <span x-text="timeAgo(schedule.last_scan_at)"></span>. -->
+                              <!-- Try a rescan, or pick a different week. -->
+                            </p>
+                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded border px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Scan this week</span>
+                            </button>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
               </template>
             </tbody>
             <template x-if="briefing?.entries?.length">
@@ -443,8 +691,11 @@
               <template x-if="reviewKind === 'year'">
                 <input type="number" x-model.number="reviewYear" @change="loadReview()" min="2020" max="2100" class="w-24 rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800" />
               </template>
-              <button @click="loadReview()" :disabled="reviewLoading" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
-                <span x-text="reviewLoading ? 'Loading…' : '↻ Refresh'"></span>
+              <button @click="loadReview()" :disabled="reviewLoading" class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
+                <template x-if="reviewLoading"><span>Loading…</span></template>
+                <template x-if="!reviewLoading">
+                  <span class="inline-flex items-center gap-1"><span x-html="icon('arrow-path', 'h-4 w-4')"></span><span>Refresh</span></span>
+                </template>
               </button>
             </div>
           </div>
@@ -497,16 +748,40 @@
               </button>
             </div>
           </div>
-          <ul class="mt-3 grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <template x-for="w in review.missing_weeks" :key="w">
-              <li class="flex items-center justify-between rounded border border-amber-200 bg-white px-2 py-1 dark:border-amber-900 dark:bg-slate-900">
-                <span class="font-mono text-xs" x-text="'Week of ' + w"></span>
-                <button
-                  @click="scanMissingWeek(w)"
-                  :disabled="reviewScanning || (scanningWeek === w)"
-                  class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
-                  x-text="scanningWeek === w ? 'Scanning…' : 'Scan'"
-                ></button>
+          <ul class="mt-3 space-y-2 text-sm">
+            <template x-for="g in missingWeeksByMonth()" :key="g.key">
+              <li class="rounded border border-amber-200 bg-white dark:border-amber-900 dark:bg-slate-900">
+                <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                  <button
+                    type="button"
+                    @click="missingMonthExpanded[g.key] = !missingMonthExpanded[g.key]"
+                    class="flex items-center gap-2 text-left"
+                    :aria-expanded="!!missingMonthExpanded[g.key]"
+                  >
+                    <span class="text-slate-500 dark:text-slate-400" x-html="icon(missingMonthExpanded[g.key] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+                    <span class="font-medium text-amber-900 dark:text-amber-200" x-text="g.label"></span>
+                    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/60 dark:text-amber-200" x-text="g.weeks.length + (g.weeks.length === 1 ? ' week' : ' weeks')"></span>
+                  </button>
+                  <button
+                    @click="scanMissingMonth(g.key)"
+                    :disabled="reviewScanning"
+                    class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                    x-text="reviewScanning ? 'Scanning…' : 'Scan this month'"
+                  ></button>
+                </div>
+                <ul x-show="missingMonthExpanded[g.key]" x-cloak class="grid grid-cols-1 gap-1.5 border-t border-amber-200 px-3 py-2 text-sm sm:grid-cols-2 lg:grid-cols-3 dark:border-amber-900">
+                  <template x-for="w in g.weeks" :key="w">
+                    <li class="flex items-center justify-between rounded border border-amber-200 bg-white px-2 py-1 dark:border-amber-900 dark:bg-slate-900">
+                      <span class="font-mono text-xs" x-text="'Week of ' + w"></span>
+                      <button
+                        @click="scanMissingWeek(w)"
+                        :disabled="reviewScanning || (scanningWeek === w)"
+                        class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                        x-text="scanningWeek === w ? 'Scanning…' : 'Scan'"
+                      ></button>
+                    </li>
+                  </template>
+                </ul>
               </li>
             </template>
           </ul>
@@ -581,10 +856,15 @@
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="font-semibold">1:1 talking points</h3>
             <div class="flex gap-2">
-              <button @click="copyReview()" class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
-                <span x-text="reviewCopied ? '✓ Copied' : '📋 Copy review'"></span>
+              <button @click="copyReview()" class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+                <template x-if="reviewCopied">
+                  <span class="inline-flex items-center gap-1"><span x-html="icon('check', 'h-4 w-4')"></span><span>Copied</span></span>
+                </template>
+                <template x-if="!reviewCopied">
+                  <span class="inline-flex items-center gap-1"><span x-html="icon('clipboard-document', 'h-4 w-4')"></span><span>Copy review</span></span>
+                </template>
               </button>
-              <button @click="downloadReview()" class="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">⬇️ Export Markdown</button>
+              <button @click="downloadReview()" class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"><span x-html="icon('arrow-down-tray', 'h-4 w-4')"></span><span>Export Markdown</span></button>
             </div>
           </div>
           <template x-for="section in talkingPointSections" :key="section.key">

@@ -132,8 +132,7 @@ def _entries_html(week_of: str | None) -> str:
 
     if not entries:
         return (
-            f"<h2>WIA Briefing — week of {html.escape(week_label)}</h2>"
-            "<p><em>No entries.</em></p>"
+            f"<h2>WIA Briefing — week of {html.escape(week_label)}</h2><p><em>No entries.</em></p>"
         )
 
     total = sum(e.duration_hours for e in entries)
@@ -170,8 +169,8 @@ def _entries_html(week_of: str | None) -> str:
         cat_total = _group_total(group)
         parts.append('<tr style="background:#fafafa;">')
         parts.append(
-            f'<td {cell}><strong>{html.escape(category)}</strong></td>'
-            f'<td {cell}><em>{len(group)} item{"s" if len(group) != 1 else ""}</em></td>'
+            f"<td {cell}><strong>{html.escape(category)}</strong></td>"
+            f"<td {cell}><em>{len(group)} item{'s' if len(group) != 1 else ''}</em></td>"
         )
         for d in days:
             parts.append(f"<td {num}><strong>{_hhmm(cat_daily[d])}</strong></td>")
@@ -265,8 +264,10 @@ def _review_markdown(rv: Review) -> str:
     )
 
     lines.append("## Headline metrics")
-    lines.append(f"- Meetings: **{rv.totals.meetings_hours:.0f}h** "
-                 f"({rv.totals.meeting_ratio * 100:.0f}% of total)")
+    lines.append(
+        f"- Meetings: **{rv.totals.meetings_hours:.0f}h** "
+        f"({rv.totals.meeting_ratio * 100:.0f}% of total)"
+    )
     lines.append(f"- Focus: **{rv.totals.focus_hours:.0f}h**")
     lines.append(f"- Collaboration: **{rv.totals.collaboration_hours:.0f}h**")
     if rv.delta:
@@ -283,9 +284,7 @@ def _review_markdown(rv: Review) -> str:
         lines.append("| Category | Hours | % | Items |")
         lines.append("|---|---:|---:|---:|")
         for c in rv.categories:
-            lines.append(
-                f"| {c.category} | {c.hours:.0f} | {c.percent:.0f}% | {c.entry_count} |"
-            )
+            lines.append(f"| {c.category} | {c.hours:.0f} | {c.percent:.0f}% | {c.entry_count} |")
         lines.append("")
 
     if rv.top_labels:
@@ -393,8 +392,7 @@ def _review_html(rv: Review) -> str:
         parts.append("<h3>Insights</h3><ul>")
         for ins in rv.insights:
             parts.append(
-                f"<li><strong>{html.escape(ins.title)}</strong> — "
-                f"{html.escape(ins.detail)}</li>"
+                f"<li><strong>{html.escape(ins.title)}</strong> — {html.escape(ins.detail)}</li>"
             )
         parts.append("</ul>")
 

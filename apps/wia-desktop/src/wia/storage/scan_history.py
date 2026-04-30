@@ -36,9 +36,7 @@ def record(
         session.refresh(row)
 
         # Trim oldest rows beyond the retention cap.
-        ids = session.exec(
-            select(ScanHistoryRow.id).order_by(desc(ScanHistoryRow.ran_at))
-        ).all()
+        ids = session.exec(select(ScanHistoryRow.id).order_by(desc(ScanHistoryRow.ran_at))).all()
         if len(ids) > MAX_ROWS:
             for old in ids[MAX_ROWS:]:
                 stale = session.get(ScanHistoryRow, old)
@@ -51,9 +49,7 @@ def record(
 def list_recent(limit: int = 50) -> list[ScanHistoryRow]:
     with get_session() as session:
         rows = session.exec(
-            select(ScanHistoryRow)
-            .order_by(desc(ScanHistoryRow.ran_at))
-            .limit(limit)
+            select(ScanHistoryRow).order_by(desc(ScanHistoryRow.ran_at)).limit(limit)
         ).all()
         return list(rows)
 
@@ -63,3 +59,14 @@ def latest() -> ScanHistoryRow | None:
         return session.exec(
             select(ScanHistoryRow).order_by(desc(ScanHistoryRow.ran_at)).limit(1)
         ).first()
+
+
+def delete_for_week(week_of: str) -> int:
+    """Remove all scan-history rows for ``week_of``. Returns the count."""
+    with get_session() as session:
+        rows = session.exec(select(ScanHistoryRow).where(ScanHistoryRow.week_of == week_of)).all()
+        count = len(rows)
+        for row in rows:
+            session.delete(row)
+        session.commit()
+        return count

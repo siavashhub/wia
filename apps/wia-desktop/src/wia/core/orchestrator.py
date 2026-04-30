@@ -13,6 +13,7 @@ from wia.core.types import (
     ActivityBlock,
     Briefing,
     BriefingTotals,
+    Confidence,
     Source,
     TimeEntry,
     WorkAreaSummary,
@@ -31,11 +32,7 @@ def _totals(blocks: list[ActivityBlock]) -> BriefingTotals:
         for b in blocks
         if b.source is Source.INFERRED and (b.title or "").lower().startswith("focus")
     )
-    collab = sum(
-        b.duration_hours
-        for b in blocks
-        if b.source in {Source.TEAMS, Source.EMAIL}
-    )
+    collab = sum(b.duration_hours for b in blocks if b.source in {Source.TEAMS, Source.EMAIL})
     total = sum(b.duration_hours for b in blocks)
     return BriefingTotals(
         total_hours=round(total, 2),
@@ -51,6 +48,26 @@ def _top_work_areas(entries: list[TimeEntry], limit: int = 5) -> list[WorkAreaSu
         by_cat[e.category or "Uncategorized"] += e.duration_hours
     items = sorted(by_cat.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     return [WorkAreaSummary(label=k, hours=round(v, 2)) for k, v in items]
+
+
+def _matches_excluded(block: ActivityBlock, keywords_lower: list[str]) -> bool:
+    """Return True if any keyword (already lower-cased) is a substring of
+    the block's title or any participant identifier.
+
+    Inferred / gap-fill blocks are produced by WIA itself and have no
+    "real" subject — we never filter them out, so an exclusion rule
+    can't accidentally drop synthetic Admin/Focus time.
+    """
+    if block.source is Source.INFERRED:
+        return False
+    haystack = (block.title or "").lower()
+    if any(kw in haystack for kw in keywords_lower):
+        return True
+    for p in block.participants:
+        p_lower = p.lower()
+        if any(kw in p_lower for kw in keywords_lower):
+            return True
+    return False
 
 
 async def build_briefing(
@@ -87,7 +104,9 @@ async def build_briefing(
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -99,8 +118,17 @@ async def build_briefing(
     if signals is None:
         # Imported here to avoid a circular import at module load time.
         from wia.api.prefs import get_enabled_signals
+
         signals = get_enabled_signals()
     log.info("Scanning enabled signals: %s", signals)
+
+    # Excluded keywords: case-insensitive substring match against block
+    # title and participants. Drives off the same prefs row the UI edits.
+    from wia.api.prefs import get_excluded_keywords
+
+    excluded_keywords = [kw.lower() for kw in get_excluded_keywords() if kw.strip()]
+    if excluded_keywords:
+        log.info("Excluding blocks matching keywords: %s", excluded_keywords)
 
     # 1. Fetch enabled signals from Work IQ MCP, in parallel.
     client = get_workiq_client()
@@ -121,7 +149,9 @@ async def build_briefing(
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -139,11 +169,20 @@ async def build_briefing(
             continue
         raw_blocks.extend(res)
 
+    if excluded_keywords and raw_blocks:
+        before = len(raw_blocks)
+        raw_blocks = [b for b in raw_blocks if not _matches_excluded(b, excluded_keywords)]
+        dropped = before - len(raw_blocks)
+        if dropped:
+            log.info("Excluded %d/%d block(s) by keyword filter", dropped, before)
+
     if workiq_failed and not raw_blocks:
         return Briefing(
             week_start=monday.isoformat(),
             week_end=sunday.isoformat(),
-            totals=BriefingTotals(total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0),
+            totals=BriefingTotals(
+                total_hours=0, meetings_hours=0, focus_hours=0, collaboration_hours=0
+            ),
             top_work_areas=[],
             entries=[],
             blocks=[],
@@ -187,18 +226,23 @@ async def build_briefing(
 def _totals_from_entries(entries: list[TimeEntry]) -> BriefingTotals:
     """Approximate totals when we don't have live blocks (cache path).
 
-    Calendar/meeting hours are inferred from confidence: ``HIGH`` entries
-    correspond to real calendar meetings; ``LOW`` entries are gap-fill
-    (admin/focus). We treat focus-time entries by label.
+    Confidence is the proxy for source (we don't persist source on
+    ``TimeEntry`` rows):
+
+    - ``HIGH`` → real calendar meetings.
+    - ``MEDIUM`` → Teams / email collaboration signals (or any entry
+      whose constituents include a Teams/email block, since
+      ``aggregate_entries`` keeps the lowest constituent confidence).
+    - ``LOW`` → inferred gap-fill (Admin / Focus). Focus entries are
+      additionally identified by label.
     """
-    meetings = sum(e.duration_hours for e in entries if e.confidence.value == "high")
-    focus = sum(
-        e.duration_hours for e in entries if (e.label or "").lower().startswith("focus")
-    )
+    meetings = sum(e.duration_hours for e in entries if e.confidence is Confidence.HIGH)
+    collab = sum(e.duration_hours for e in entries if e.confidence is Confidence.MEDIUM)
+    focus = sum(e.duration_hours for e in entries if (e.label or "").lower().startswith("focus"))
     total = sum(e.duration_hours for e in entries)
     return BriefingTotals(
         total_hours=round(total, 2),
         meetings_hours=round(meetings, 2),
         focus_hours=round(focus, 2),
-        collaboration_hours=0.0,
+        collaboration_hours=round(collab, 2),
     )

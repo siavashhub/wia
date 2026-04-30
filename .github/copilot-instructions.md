@@ -12,7 +12,7 @@ short and factual.
   external agents (e.g. Copilot Chat). See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 - Monorepo managed with **uv workspaces**. Application code lives in
   [apps/wia-desktop/src/wia](../apps/wia-desktop/src/wia/).
-- Python **3.11–3.12** only. Target platform is **Windows 10/11**; do not add
+- Python **3.12** only. Target platform is **Windows 10/11**; do not add
   POSIX-only assumptions to runtime code.
 
 ## Toolchain
