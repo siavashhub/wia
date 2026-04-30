@@ -1,13 +1,13 @@
 name: codeql
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Weekly Monday scan keeps results fresh for Copilot Autofix.
-    - cron: "23 5 * * 1"
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  # schedule:
+  #   # Weekly Monday scan keeps results fresh for Copilot Autofix.
+  #   - cron: "23 5 * * 1"
   workflow_dispatch:
 
 permissions:
