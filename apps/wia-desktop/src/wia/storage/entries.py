@@ -122,3 +122,21 @@ def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
             new_row.id = None
             session.add(new_row)
         session.commit()
+
+
+def delete_week(week_of: str) -> int:
+    """Delete *every* entry for ``week_of`` — including user-edited rows.
+
+    Returns the number of rows removed. Used by the "remove week" UI to
+    fully wipe a week's scanned + edited data so the next scan starts from
+    a clean slate.
+    """
+    with get_session() as session:
+        rows = session.exec(
+            select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)
+        ).all()
+        count = len(rows)
+        for row in rows:
+            session.delete(row)
+        session.commit()
+        return count

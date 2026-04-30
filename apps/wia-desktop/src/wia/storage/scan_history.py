@@ -63,3 +63,16 @@ def latest() -> ScanHistoryRow | None:
         return session.exec(
             select(ScanHistoryRow).order_by(desc(ScanHistoryRow.ran_at)).limit(1)
         ).first()
+
+
+def delete_for_week(week_of: str) -> int:
+    """Remove all scan-history rows for ``week_of``. Returns the count."""
+    with get_session() as session:
+        rows = session.exec(
+            select(ScanHistoryRow).where(ScanHistoryRow.week_of == week_of)
+        ).all()
+        count = len(rows)
+        for row in rows:
+            session.delete(row)
+        session.commit()
+        return count

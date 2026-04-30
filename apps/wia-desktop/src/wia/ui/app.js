@@ -7,16 +7,24 @@ function wia() {
     loading: false,           // any briefing fetch in flight (cache or scan)
     scanningBriefing: false,  // a background scan (refresh=true) is running
     scanningWeekIso: null,    // which Monday-week the scan is targeting
+    clearingWeek: false,      // DELETE /api/briefing in flight
     error: null,
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
     minWeekOffset: -52, // allow up to 1 year of history
     prefs: { theme: 'system', enabled_signals: ['calendar'] },
     availableSignals: [
-      { key: 'calendar', label: '🗓 Calendar' },
-      { key: 'teams', label: '💬 Teams' },
-      { key: 'email', label: '✉️ Email' },
+      { key: 'calendar', label: 'Calendar', icon: 'calendar-days' },
+      { key: 'teams', label: 'Teams', icon: 'chat-bubble-left-right' },
+      { key: 'email', label: 'Email', icon: 'envelope' },
     ],
+    // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
+    // via x-html so the icon inherits currentColor like Tailwind text.
+    icon(name, classes) {
+      return (typeof window !== 'undefined' && window.wiaIcon)
+        ? window.wiaIcon(name, classes)
+        : '';
+    },
     schedule: { interval_minutes: 0, allowed_intervals: [], last_scan_at: null, last_scan_status: null, last_scan_week_of: null, last_scan_trigger: null },
     history: [],
     historyOpen: false,
@@ -341,6 +349,34 @@ function wia() {
     },
 
     rescan() { return this.loadBriefing(true); },
+
+    // Wipe every entry (including manual edits) and scan-history rows for
+    // the displayed week, then reload the now-empty briefing. The user
+    // can re-run a scan from scratch afterwards.
+    async clearWeek() {
+      if (this.scanningBriefing || this.clearingWeek) return;
+      const weekIso = this.weekStartIso(this.weekOffset);
+      const ok = window.confirm(
+        `Remove all scanned and edited data for the week of ${weekIso}? ` +
+        `This cannot be undone.`
+      );
+      if (!ok) return;
+      this.clearingWeek = true;
+      this.error = null;
+      try {
+        const params = new URLSearchParams({ week_of: weekIso });
+        const r = await fetch(`/api/briefing?${params.toString()}`, { method: 'DELETE' });
+        if (!r.ok) throw new Error(await r.text());
+        await this.loadBriefing(false);
+        await this.loadSchedule();
+        if (this.historyOpen) await this.loadHistory();
+        if (this.review) await this.loadReview();
+      } catch (e) {
+        this.error = `Failed to clear week ${weekIso}: ${e}`;
+      } finally {
+        this.clearingWeek = false;
+      }
+    },
 
     // ---- Grouping --------------------------------------------------------
     groupedEntries() {
