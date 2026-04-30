@@ -84,6 +84,9 @@ jobs:
           Get-Content SHA256SUMS.txt
 
       - name: Attest build provenance
+        # Build provenance attestations require a public repo (or GitHub
+        # Enterprise). Skip for private repos so the release still publishes.
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
