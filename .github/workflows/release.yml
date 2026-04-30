@@ -71,7 +71,7 @@ jobs:
           Get-ChildItem dist\installer\*.exe | Copy-Item -Destination dist\release\
 
       - name: Generate SBOM (CycloneDX)
-        run: uv run cyclonedx-py environment --output-format JSON --outfile dist/release/wia-sbom.cdx.json
+        run: uv run cyclonedx-py environment --output-format JSON --output-file dist/release/wia-sbom.cdx.json
 
       - name: Generate SHA256 checksums
         shell: pwsh
