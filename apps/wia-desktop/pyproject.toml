@@ -5,6 +5,8 @@ description = "WIA desktop app — pywebview + FastAPI + Work IQ MCP orchestrato
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "WIA contributors" }]
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["../../LICENSE", "../../NOTICE"]
 
 dependencies = [
     "fastapi>=0.115",

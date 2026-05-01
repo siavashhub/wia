@@ -1,0 +1,12 @@
+WIA — Work Intelligence Agent
+Copyright 2026 WIA contributors
+
+This product includes software developed by the WIA contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License").
+See the LICENSE file in the root of this repository for the full text,
+or https://www.apache.org/licenses/LICENSE-2.0.
+
+This product orchestrates the Microsoft Work IQ CLI (`@microsoft/workiq`)
+via the Model Context Protocol. WIA does not bundle, redistribute, or
+modify the Work IQ CLI; it is invoked at runtime via `npx`.

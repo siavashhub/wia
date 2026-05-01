@@ -47,6 +47,23 @@ WIA is a lightweight Windows desktop app (Python + FastAPI + pywebview) that orc
 | Microsoft 365 with Copilot license | Required by Work IQ |
 | Tenant admin consent | Granted **once** for the Microsoft-published Work IQ Entra app — not for WIA |
 
+### Verify the installer (optional)
+
+The release workflow signs every artifact with a [GitHub build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)
+via Sigstore. Anyone can confirm the installer was produced by this repo's
+`release.yml` on the tagged commit (and not tampered with) using the GitHub CLI:
+
+```pwsh
+# Requires: GitHub CLI (https://cli.github.com/)
+gh attestation verify .\wia-setup-0.1.0.exe --repo <owner>/wia
+```
+
+You can also cross-check against `SHA256SUMS.txt` published with the release:
+
+```pwsh
+Get-FileHash .\wia-setup-0.1.0.exe -Algorithm SHA256
+```
+
 ## Quick start (developers)
 
 ```pwsh
@@ -155,4 +172,4 @@ See [AGENTS.md](AGENTS.md) for the full house rules (also consumed by GitHub Cop
 
 ## License
 
-TBD.
+[Apache 2.0](LICENSE) © WIA contributors. See [NOTICE](NOTICE) for attribution.
