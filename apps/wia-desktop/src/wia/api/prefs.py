@@ -13,10 +13,13 @@ router = APIRouter()
 
 ALLOWED_THEMES = {"light", "dark", "system"}
 ALLOWED_SIGNALS = ("calendar", "teams", "email")
+ALLOWED_WEEK_STARTS = {"mon", "sun"}
 DEFAULT_SIGNALS = ["calendar"]
+DEFAULT_WEEK_STARTS_ON = "sun"
 PREF_THEME = "theme"
 PREF_SIGNALS = "enabled_signals"
 PREF_EXCLUDED_KEYWORDS = "excluded_keywords"
+PREF_WEEK_STARTS_ON = "week_starts_on"
 
 # Cap the list so a runaway UI can't bloat the prefs row or slow down the
 # substring filter the orchestrator runs against every fetched block.
@@ -101,16 +104,25 @@ def get_excluded_keywords() -> list[str]:
     return _read_excluded_keywords()
 
 
+def _read_week_starts_on() -> str:
+    raw = prefs_store.get_pref(PREF_WEEK_STARTS_ON)
+    if raw in ALLOWED_WEEK_STARTS:
+        return raw
+    return DEFAULT_WEEK_STARTS_ON
+
+
 class Prefs(BaseModel):
     theme: str = "system"
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
     excluded_keywords: list[str] = Field(default_factory=list)
+    week_starts_on: str = DEFAULT_WEEK_STARTS_ON
 
 
 class PrefsUpdate(BaseModel):
     theme: str | None = None
     enabled_signals: list[str] | None = None
     excluded_keywords: list[str] | None = None
+    week_starts_on: str | None = None
 
 
 @router.get("")
@@ -119,6 +131,7 @@ async def get_prefs() -> Prefs:
         theme=prefs_store.get_pref(PREF_THEME) or "system",
         enabled_signals=_read_signals(),
         excluded_keywords=_read_excluded_keywords(),
+        week_starts_on=_read_week_starts_on(),
     )
 
 
@@ -144,4 +157,11 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
     if update.excluded_keywords is not None:
         cleaned_kws = _normalize_keywords(update.excluded_keywords)
         prefs_store.set_pref(PREF_EXCLUDED_KEYWORDS, json.dumps(cleaned_kws))
+    if update.week_starts_on is not None:
+        if update.week_starts_on not in ALLOWED_WEEK_STARTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"week_starts_on must be one of {sorted(ALLOWED_WEEK_STARTS)}",
+            )
+        prefs_store.set_pref(PREF_WEEK_STARTS_ON, update.week_starts_on)
     return await get_prefs()
