@@ -12,13 +12,14 @@ function wia() {
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
     minWeekOffset: -52, // allow up to 1 year of history
-    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [] },
+    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], exclude_private_meetings: false },
     availableSignals: [
       { key: 'calendar', label: 'Calendar', icon: 'calendar-days' },
       { key: 'teams', label: 'Teams', icon: 'chat-bubble-left-right' },
       { key: 'email', label: 'Email', icon: 'envelope' },
     ],
     newExcludedKeyword: '',
+    newExcludedCategory: '',
     // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
     // via x-html so the icon inherits currentColor like Tailwind text.
     icon(name, classes) {
@@ -197,6 +198,51 @@ function wia() {
       const next = (this.prefs.excluded_keywords || []).filter((k) => k !== kw);
       this.prefs.excluded_keywords = next;
       await this._saveExcludedKeywords(next);
+    },
+
+    async _saveExcludedCategories(next) {
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ excluded_calendar_categories: next }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save excluded categories failed: ${e}`; }
+    },
+
+    async addExcludedCategory() {
+      const raw = (this.newExcludedCategory || '').trim();
+      if (!raw) return;
+      const existing = (this.prefs.excluded_calendar_categories || []).map((k) => k.toLowerCase());
+      if (existing.includes(raw.toLowerCase())) {
+        this.newExcludedCategory = '';
+        return;
+      }
+      const next = [...(this.prefs.excluded_calendar_categories || []), raw];
+      this.prefs.excluded_calendar_categories = next;
+      this.newExcludedCategory = '';
+      await this._saveExcludedCategories(next);
+    },
+
+    async removeExcludedCategory(cat) {
+      const next = (this.prefs.excluded_calendar_categories || []).filter((k) => k !== cat);
+      this.prefs.excluded_calendar_categories = next;
+      await this._saveExcludedCategories(next);
+    },
+
+    async toggleExcludePrivate(on) {
+      this.prefs.exclude_private_meetings = !!on;
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exclude_private_meetings: !!on }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save private-meetings toggle failed: ${e}`; }
     },
 
     async loadPrefs() {

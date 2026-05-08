@@ -17,11 +17,18 @@ DEFAULT_SIGNALS = ["calendar"]
 PREF_THEME = "theme"
 PREF_SIGNALS = "enabled_signals"
 PREF_EXCLUDED_KEYWORDS = "excluded_keywords"
+PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
+PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
+
+# Sensitivity values (Outlook) considered "private" for the toggle.
+PRIVATE_SENSITIVITIES = frozenset({"private", "personal", "confidential"})
 
 # Cap the list so a runaway UI can't bloat the prefs row or slow down the
 # substring filter the orchestrator runs against every fetched block.
 MAX_EXCLUDED_KEYWORDS = 100
 MAX_KEYWORD_LENGTH = 100
+MAX_EXCLUDED_CATEGORIES = 100
+MAX_CATEGORY_LENGTH = 100
 
 
 def _read_signals() -> list[str]:
@@ -101,16 +108,94 @@ def get_excluded_keywords() -> list[str]:
     return _read_excluded_keywords()
 
 
+def _read_excluded_categories() -> list[str]:
+    raw = prefs_store.get_pref(PREF_EXCLUDED_CATEGORIES)
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in parsed:
+        if not isinstance(c, str):
+            continue
+        cleaned = c.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _normalize_categories(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            raise HTTPException(
+                status_code=400, detail="excluded_calendar_categories must all be strings"
+            )
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_CATEGORY_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"category exceeds {MAX_CATEGORY_LENGTH} chars: {cleaned[:32]!r}…",
+            )
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    if len(out) > MAX_EXCLUDED_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"at most {MAX_EXCLUDED_CATEGORIES} excluded categories allowed",
+        )
+    return out
+
+
+def _read_exclude_private() -> bool:
+    raw = prefs_store.get_pref(PREF_EXCLUDE_PRIVATE)
+    if not raw:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_excluded_calendar_categories() -> list[str]:
+    """Public helper used by the orchestrator to filter calendar blocks by
+    Outlook category."""
+    return _read_excluded_categories()
+
+
+def get_exclude_private_meetings() -> bool:
+    """Public helper: should calendar blocks marked private/personal/
+    confidential be dropped before grouping?"""
+    return _read_exclude_private()
+
+
 class Prefs(BaseModel):
     theme: str = "system"
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
     excluded_keywords: list[str] = Field(default_factory=list)
+    excluded_calendar_categories: list[str] = Field(default_factory=list)
+    exclude_private_meetings: bool = False
 
 
 class PrefsUpdate(BaseModel):
     theme: str | None = None
     enabled_signals: list[str] | None = None
     excluded_keywords: list[str] | None = None
+    excluded_calendar_categories: list[str] | None = None
+    exclude_private_meetings: bool | None = None
 
 
 @router.get("")
@@ -119,6 +204,8 @@ async def get_prefs() -> Prefs:
         theme=prefs_store.get_pref(PREF_THEME) or "system",
         enabled_signals=_read_signals(),
         excluded_keywords=_read_excluded_keywords(),
+        excluded_calendar_categories=_read_excluded_categories(),
+        exclude_private_meetings=_read_exclude_private(),
     )
 
 
@@ -144,4 +231,11 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
     if update.excluded_keywords is not None:
         cleaned_kws = _normalize_keywords(update.excluded_keywords)
         prefs_store.set_pref(PREF_EXCLUDED_KEYWORDS, json.dumps(cleaned_kws))
+    if update.excluded_calendar_categories is not None:
+        cleaned_cats = _normalize_categories(update.excluded_calendar_categories)
+        prefs_store.set_pref(PREF_EXCLUDED_CATEGORIES, json.dumps(cleaned_cats))
+    if update.exclude_private_meetings is not None:
+        prefs_store.set_pref(
+            PREF_EXCLUDE_PRIVATE, "true" if update.exclude_private_meetings else "false"
+        )
     return await get_prefs()

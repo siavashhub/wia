@@ -70,6 +70,31 @@ def _matches_excluded(block: ActivityBlock, keywords_lower: list[str]) -> bool:
     return False
 
 
+def _matches_excluded_category(block: ActivityBlock, categories_lower: set[str]) -> bool:
+    """Return True if the calendar block carries any Outlook category that
+    the user has chosen to exclude. Matches the metadata written by
+    ``mcp_clients.workiq._event_to_block`` (``categories`` is a
+    ``|``-joined lowercase string).
+    """
+    if block.source is not Source.CALENDAR:
+        return False
+    raw = block.metadata.get("categories", "")
+    if not raw:
+        return False
+    return any(part for part in raw.split("|") if part in categories_lower)
+
+
+def _is_private_meeting(block: ActivityBlock) -> bool:
+    """True when a calendar block is marked as private/personal/confidential."""
+    # Imported lazily to avoid a circular import at module load time.
+    from wia.api.prefs import PRIVATE_SENSITIVITIES
+
+    if block.source is not Source.CALENDAR:
+        return False
+    sensitivity = (block.metadata.get("sensitivity") or "").lower()
+    return sensitivity in PRIVATE_SENSITIVITIES
+
+
 async def build_briefing(
     *,
     week_of: date | None = None,
@@ -124,11 +149,23 @@ async def build_briefing(
 
     # Excluded keywords: case-insensitive substring match against block
     # title and participants. Drives off the same prefs row the UI edits.
-    from wia.api.prefs import get_excluded_keywords
+    from wia.api.prefs import (
+        get_exclude_private_meetings,
+        get_excluded_calendar_categories,
+        get_excluded_keywords,
+    )
 
     excluded_keywords = [kw.lower() for kw in get_excluded_keywords() if kw.strip()]
     if excluded_keywords:
         log.info("Excluding blocks matching keywords: %s", excluded_keywords)
+    excluded_categories = {c.lower() for c in get_excluded_calendar_categories() if c.strip()}
+    if excluded_categories:
+        log.info(
+            "Excluding calendar blocks tagged with categories: %s", sorted(excluded_categories)
+        )
+    exclude_private = get_exclude_private_meetings()
+    if exclude_private:
+        log.info("Excluding private/personal/confidential calendar meetings")
 
     # 1. Fetch enabled signals from Work IQ MCP, in parallel.
     client = get_workiq_client()
@@ -175,6 +212,22 @@ async def build_briefing(
         dropped = before - len(raw_blocks)
         if dropped:
             log.info("Excluded %d/%d block(s) by keyword filter", dropped, before)
+
+    if excluded_categories and raw_blocks:
+        before = len(raw_blocks)
+        raw_blocks = [
+            b for b in raw_blocks if not _matches_excluded_category(b, excluded_categories)
+        ]
+        dropped = before - len(raw_blocks)
+        if dropped:
+            log.info("Excluded %d/%d calendar block(s) by category filter", dropped, before)
+
+    if exclude_private and raw_blocks:
+        before = len(raw_blocks)
+        raw_blocks = [b for b in raw_blocks if not _is_private_meeting(b)]
+        dropped = before - len(raw_blocks)
+        if dropped:
+            log.info("Excluded %d/%d private calendar meeting(s)", dropped, before)
 
     if workiq_failed and not raw_blocks:
         return Briefing(

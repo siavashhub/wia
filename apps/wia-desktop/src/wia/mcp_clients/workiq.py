@@ -179,7 +179,10 @@ class WorkIQClient:
             "not yet attended. "
             "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
-            '"organizer":"email","participants":["email"],"isOnline":true}]}. '
+            '"organizer":"email","participants":["email"],"isOnline":true,'
+            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential"}]}. '
+            "Include the event's Outlook categories array (empty array if none) "
+            "and its sensitivity (one of normal, personal, private, confidential). "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are no events, return {"events":[]}.'
         )
@@ -416,6 +419,24 @@ def _event_to_block(
     attendees = ev.get("attendees") or ev.get("participants") or []
     if attendees and isinstance(attendees[0], dict):
         attendees = [a.get("email") or a.get("address") or "" for a in attendees]
+    metadata: dict[str, str] = {"id": str(ev.get("id", ""))}
+    # Outlook categories — stored as a ``|``-joined lowercase string so the
+    # orchestrator can do a cheap substring/membership check without re-
+    # parsing JSON. Empty when the event has no categories.
+    categories = ev.get("categories") or []
+    if isinstance(categories, str):
+        categories = [categories]
+    cat_norm = [str(c).strip() for c in categories if str(c).strip()]
+    if cat_norm:
+        metadata["categories"] = "|".join(c.lower() for c in cat_norm)
+        metadata["categories_display"] = ", ".join(cat_norm)
+    # Sensitivity (Outlook): normal | personal | private | confidential.
+    # Some sources may provide ``isPrivate`` instead.
+    sensitivity = ev.get("sensitivity")
+    if not sensitivity and ev.get("isPrivate") is True:
+        sensitivity = "private"
+    if isinstance(sensitivity, str) and sensitivity.strip():
+        metadata["sensitivity"] = sensitivity.strip().lower()
     return ActivityBlock(
         start=start,
         end=end,
@@ -423,7 +444,7 @@ def _event_to_block(
         participants=[a for a in attendees if a],
         source=source,
         confidence=confidence,
-        metadata={"id": str(ev.get("id", ""))},
+        metadata=metadata,
     )
 
 
