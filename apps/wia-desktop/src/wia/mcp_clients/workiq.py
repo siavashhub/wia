@@ -44,6 +44,16 @@ class WorkIQStatus:
     message: str | None = None
 
 
+@dataclass
+class WorkIQIdentity:
+    """The signed-in M365 user behind the Work IQ CLI."""
+
+    upn: str
+    display_name: str | None = None
+    tenant_name: str | None = None
+    source: str = "ask_work_iq"  # which MCP tool produced this
+
+
 def _resolve_command(command: str) -> str | None:
     """Resolve a command name to its absolute executable path.
 
@@ -158,6 +168,82 @@ class WorkIQClient:
                 except json.JSONDecodeError:
                     return text
         return None
+
+    async def _list_tool_names(self) -> list[str]:
+        """Return the names of every tool the Work IQ MCP server exposes.
+
+        Used once at identity-discovery time so we can prefer a typed
+        ``me`` / ``whoami`` tool over the natural-language ``ask_work_iq``
+        when the server provides one. Failures are non-fatal — we just
+        return an empty list and the caller falls back.
+        """
+        try:
+            async with (
+                self._lock,
+                stdio_client(self._params) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                listed = await session.list_tools()
+        except Exception as exc:
+            log.debug("Work IQ list_tools failed: %r", exc)
+            return []
+        names: list[str] = []
+        for t in getattr(listed, "tools", []) or []:
+            n = getattr(t, "name", None)
+            if isinstance(n, str) and n:
+                names.append(n)
+        return names
+
+    async def fetch_user_identity(self) -> WorkIQIdentity | None:
+        """Return the signed-in user's UPN / display name / tenant.
+
+        Strategy:
+
+        1. Probe ``list_tools`` once. If the server exposes a typed
+           identity tool (``me``, ``whoami``, ``identity``, ``user.get``,
+           etc.), call it directly — fewer round-trips, no LLM in the
+           loop.
+        2. Otherwise, fall back to ``ask_work_iq`` with a tight whoami
+           prompt that asks Microsoft 365 Copilot for its own signed-in
+           account. The prompt requests strict JSON so we can parse it.
+
+        Returns ``None`` when both paths fail (e.g. CLI not signed in).
+        Callers should treat absence as a soft signal — never block a
+        user flow on this.
+        """
+        # 1. Try a typed identity tool if one is advertised.
+        candidates = ("me", "whoami", "identity", "user.get", "user_info", "userInfo")
+        try:
+            available = await self._list_tool_names()
+        except Exception as exc:  # pragma: no cover - defensive
+            log.debug("list_tools probe raised: %r", exc)
+            available = []
+        chosen = next((c for c in candidates if c in available), None)
+        if chosen:
+            try:
+                payload = await self._call_tool(chosen, {})
+            except Exception as exc:
+                log.warning("Work IQ %s tool failed: %r", chosen, exc)
+            else:
+                ident = _identity_from_payload(payload, source=chosen)
+                if ident:
+                    return ident
+
+        # 2. Fall back to ask_work_iq with a strict whoami prompt.
+        prompt = (
+            "Who am I? Return ONLY a JSON object, no prose, no markdown fences, "
+            'in this exact shape: {"upn":"<my user principal name>",'
+            '"displayName":"<my full name>","tenantName":"<my organization name>"}. '
+            "Use my actual signed-in Microsoft 365 account. "
+            "If any field is unknown, return an empty string for it."
+        )
+        try:
+            payload = await self._call_tool("ask_work_iq", {"question": prompt})
+        except Exception as exc:
+            log.warning("Work IQ whoami fetch failed: %r", exc)
+            return None
+        return _identity_from_payload(payload, source="ask_work_iq")
 
     async def fetch_calendar_blocks(self, start: date, end: date) -> list[ActivityBlock]:
         """Fetch every calendar event between [start, end] inclusive.
@@ -350,6 +436,72 @@ class WorkIQClient:
             message=(stderr or b"").decode("utf-8", errors="replace").strip()
             or "Work IQ failed to authenticate.",
         )
+
+
+def _identity_from_payload(payload: Any, *, source: str) -> WorkIQIdentity | None:
+    """Parse an identity dict out of a Work IQ tool response.
+
+    Accepts either a direct dict, a ``{"response": "<json>"}`` envelope
+    (the ``ask_work_iq`` shape), or a JSON string with optional ```json
+    fences. Returns ``None`` when no UPN-shaped string is found.
+    """
+    obj = _coerce_identity(payload)
+    if not obj:
+        return None
+    upn = _pick_upn(obj)
+    if not upn:
+        return None
+    display = _pick_str(obj, ("displayName", "display_name", "name"))
+    tenant = _pick_str(obj, ("tenantName", "tenant_name", "organization", "org"))
+    return WorkIQIdentity(
+        upn=upn.strip(),
+        display_name=display.strip() if display else None,
+        tenant_name=tenant.strip() if tenant else None,
+        source=source,
+    )
+
+
+def _coerce_identity(value: Any) -> dict[str, Any] | None:
+    """Pull a plain dict out of nested envelopes / JSON strings."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        # ask_work_iq wraps the real payload as a JSON string under "response".
+        if "response" in value and not any(
+            k in value for k in ("upn", "userPrincipalName", "mail", "email")
+        ):
+            return _coerce_identity(value["response"])
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return _coerce_identity(parsed)
+    return None
+
+
+def _pick_upn(obj: dict[str, Any]) -> str:
+    """Return the first email-shaped value found among the common UPN keys."""
+    for key in ("upn", "userPrincipalName", "mail", "email", "preferred_username"):
+        v = obj.get(key)
+        if isinstance(v, str) and "@" in v:
+            return v
+    return ""
+
+
+def _pick_str(obj: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        v = obj.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return ""
 
 
 def _extract_events(payload: Any) -> list[dict[str, Any]]:

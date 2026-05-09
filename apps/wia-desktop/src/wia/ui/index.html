@@ -91,7 +91,15 @@
             <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
           </div>
           <template x-if="workiq.ready">
-            <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"><span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Work IQ connected</span></span>
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span>
+              <span>Work IQ connected</span>
+              <template x-if="identity.upn">
+                <span class="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-200/70 px-2 py-0.5 text-[11px] font-normal text-emerald-800 dark:bg-emerald-800/50 dark:text-emerald-100" :title="identity.display_name ? identity.display_name + ' · ' + identity.upn : identity.upn">
+                  <span x-text="identity.upn"></span>
+                </span>
+              </template>
+            </span>
           </template>
           <template x-if="!workiq.ready">
             <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
@@ -681,9 +689,6 @@
                               :title="opt.l + ' impact'"
                               class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
                             >
-                              <template x-if="opt.v === 'high' && (row.entry.impact || 'medium') === 'high'">
-                                <span x-html="icon('star', 'h-3 w-3')"></span>
-                              </template>
                               <span x-text="opt.l"></span>
                             </button>
                           </template>

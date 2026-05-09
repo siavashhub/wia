@@ -2,6 +2,8 @@
 function wia() {
   return {
     workiq: { installed: false, ready: false, version: null, message: null },
+    identity: { upn: '', display_name: '' },
+    identityLoading: false,
     enabling: false,
     briefing: null,
     loading: false,           // any briefing fetch in flight (cache or scan)
@@ -251,6 +253,15 @@ function wia() {
         const r = await fetch('/api/prefs');
         this.prefs = await r.json();
         this.organizationDraft = this.prefs.organization_label || '';
+        // Seed the identity badge from the cached UPN so the header
+        // renders immediately, before the workiq probe / identity fetch
+        // round-trips complete.
+        if (this.prefs.user_upn) {
+          this.identity = {
+            upn: this.prefs.user_upn || '',
+            display_name: this.prefs.user_display_name || '',
+          };
+        }
         try {
           if (this.prefs && this.prefs.theme) {
             window.localStorage && window.localStorage.setItem('wia-theme', this.prefs.theme);
@@ -404,6 +415,26 @@ function wia() {
         const r = await fetch('/api/workiq/status');
         this.workiq = await r.json();
       } catch (e) { this.error = String(e); }
+      // Best-effort: pull the cached UPN immediately, then trigger a
+      // background fetch the first time so the badge fills in without
+      // blocking the rest of init().
+      if (this.workiq.ready) this.refreshIdentity({ background: true });
+    },
+
+    async refreshIdentity({ force = false, background = false } = {}) {
+      if (this.identityLoading) return;
+      this.identityLoading = !background;
+      try {
+        const url = force ? '/api/workiq/identity?refresh=true' : '/api/workiq/identity';
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const data = await r.json();
+        this.identity = {
+          upn: data.upn || '',
+          display_name: data.display_name || '',
+        };
+      } catch (e) { /* non-fatal */ }
+      finally { this.identityLoading = false; }
     },
 
     async enableWorkIQ() {
@@ -412,7 +443,11 @@ function wia() {
         const r = await fetch('/api/workiq/enable', { method: 'POST' });
         this.workiq = await r.json();
         if (!this.workiq.ready && this.workiq.message) this.error = this.workiq.message;
-        if (this.workiq.ready) await this.loadBriefing(true);
+        if (this.workiq.ready) {
+          // Force-refresh the identity now that we've just signed in.
+          this.refreshIdentity({ force: true, background: true });
+          await this.loadBriefing(true);
+        }
       } catch (e) { this.error = `Enable failed: ${e}`; }
       finally { this.enabling = false; }
     },

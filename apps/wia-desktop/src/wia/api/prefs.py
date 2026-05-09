@@ -21,6 +21,8 @@ PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
 PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
 PREF_ORGANIZATION = "organization_label"
 PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
+PREF_USER_UPN = "user_upn"
+PREF_USER_DISPLAY_NAME = "user_display_name"
 
 # Sensitivity values (Outlook) considered "private" for the toggle.
 PRIVATE_SENSITIVITIES = frozenset({"private", "personal", "confidential"})
@@ -228,6 +230,23 @@ def derive_organization_label_from_domain(domain: str) -> str:
     return head.replace("-", " ").title()
 
 
+def get_user_identity() -> tuple[str, str]:
+    """Return the cached signed-in user's ``(upn, display_name)``.
+
+    Empty strings when no identity has been fetched yet.
+    """
+    return (
+        (prefs_store.get_pref(PREF_USER_UPN) or "").strip(),
+        (prefs_store.get_pref(PREF_USER_DISPLAY_NAME) or "").strip(),
+    )
+
+
+def set_user_identity(upn: str, display_name: str | None) -> None:
+    """Persist the signed-in user's UPN and display name."""
+    prefs_store.set_pref(PREF_USER_UPN, (upn or "").strip()[:200])
+    prefs_store.set_pref(PREF_USER_DISPLAY_NAME, (display_name or "").strip()[:200])
+
+
 class Prefs(BaseModel):
     theme: str = "system"
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
@@ -236,6 +255,8 @@ class Prefs(BaseModel):
     exclude_private_meetings: bool = False
     organization_label: str = ""
     organization_label_auto: bool = False
+    user_upn: str = ""
+    user_display_name: str = ""
 
 
 class PrefsUpdate(BaseModel):
@@ -249,6 +270,7 @@ class PrefsUpdate(BaseModel):
 
 @router.get("")
 async def get_prefs() -> Prefs:
+    upn, display = get_user_identity()
     return Prefs(
         theme=prefs_store.get_pref(PREF_THEME) or "system",
         enabled_signals=_read_signals(),
@@ -257,6 +279,8 @@ async def get_prefs() -> Prefs:
         exclude_private_meetings=_read_exclude_private(),
         organization_label=get_organization_label(),
         organization_label_auto=is_organization_auto(),
+        user_upn=upn,
+        user_display_name=display,
     )
 
 
