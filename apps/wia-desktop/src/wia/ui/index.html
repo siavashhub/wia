@@ -11,9 +11,10 @@
     <style>
       html, body { margin: 0; background: #f8fafc; color: #0f172a; }
       @media (prefers-color-scheme: dark) {
-        html:not(.light), body:not(.light) { background: #020617; color: #f1f5f9; }
+        html:not(.light), html:not(.light) body { background: #020617; color: #f1f5f9; }
       }
       html.dark, html.dark body { background: #020617; color: #f1f5f9; }
+      html.light, html.light body { background: #f8fafc; color: #0f172a; }
       [x-cloak] { display: none !important; }
       #wia-splash {
         position: fixed; inset: 0; z-index: 9999;
@@ -47,6 +48,11 @@
         const stored = window.localStorage && window.localStorage.getItem('wia-theme');
         if (stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
           document.documentElement.classList.add('dark');
+        } else {
+          // Mark light explicitly so the inline boot CSS rule
+          // `html:not(.light)` (under prefers-color-scheme: dark) doesn't
+          // force body color to white before Alpine hydrates.
+          document.documentElement.classList.add('light');
         }
       } catch (e) { /* non-fatal */ }
     </script>
@@ -85,27 +91,38 @@
           </nav>
         </div>
         <div class="flex items-center gap-3 text-sm">
+          <!-- Work IQ status pill / Enable button. Placed to the LEFT of the
+               theme picker so its late arrival (or width changes when the
+               UPN tag fills in) grows leftward into empty header space
+               instead of pushing the theme picker around. -->
+          <div class="inline-flex min-h-[28px] items-center justify-end">
+            <template x-if="!workiqChecked">
+              <span class="inline-flex h-6 w-32 items-center justify-end" aria-hidden="true">
+                <span class="h-5 w-28 rounded-full wia-skeleton"></span>
+              </span>
+            </template>
+            <template x-if="workiqChecked && workiq.ready">
+              <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span>
+                <span>Work IQ connected</span>
+                <template x-if="identity.upn">
+                  <span class="ml-1 inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full bg-emerald-200/70 px-2 py-0.5 text-[11px] font-normal text-emerald-800 dark:bg-emerald-800/50 dark:text-emerald-100" :title="identity.display_name ? identity.display_name + ' · ' + identity.upn : identity.upn">
+                    <span class="truncate" x-text="identity.upn"></span>
+                  </span>
+                </template>
+              </span>
+            </template>
+            <template x-if="workiqChecked && !workiq.ready">
+              <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
+                <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+              </button>
+            </template>
+          </div>
           <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
             <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('sun', 'h-3.5 w-3.5')"></span><span>Light</span></button>
             <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('moon', 'h-3.5 w-3.5')"></span><span>Dark</span></button>
             <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
           </div>
-          <template x-if="workiq.ready">
-            <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-              <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span>
-              <span>Work IQ connected</span>
-              <template x-if="identity.upn">
-                <span class="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-200/70 px-2 py-0.5 text-[11px] font-normal text-emerald-800 dark:bg-emerald-800/50 dark:text-emerald-100" :title="identity.display_name ? identity.display_name + ' · ' + identity.upn : identity.upn">
-                  <span x-text="identity.upn"></span>
-                </span>
-              </template>
-            </span>
-          </template>
-          <template x-if="!workiq.ready">
-            <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
-              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
-            </button>
-          </template>
         </div>
       </div>
     </header>

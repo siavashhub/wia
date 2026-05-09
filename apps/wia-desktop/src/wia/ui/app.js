@@ -1,8 +1,28 @@
 // WIA UI controller (Alpine.js)
 function wia() {
+  // Read the last-known Work IQ status / identity synchronously so the
+  // header pill renders at its real final size on the very first paint.
+  // A first-time user (no cache) falls back to the skeleton placeholder;
+  // returning users get zero layout shift even if their UPN is unusually
+  // long. The cache is refreshed after every successful status probe.
+  let cached = null;
+  try {
+    const raw = window.localStorage && window.localStorage.getItem('wia-workiq-cache');
+    if (raw) cached = JSON.parse(raw);
+  } catch (e) { /* non-fatal */ }
+  const seedReady = !!(cached && cached.ready);
+  const seedUpn = (cached && cached.upn) || '';
+  const seedDisplayName = (cached && cached.displayName) || '';
+
   return {
-    workiq: { installed: false, ready: false, version: null, message: null },
-    identity: { upn: '', display_name: '' },
+    workiq: { installed: seedReady, ready: seedReady, version: null, message: null },
+    // True once the first /api/workiq/status probe has resolved (success or
+    // failure). Used by the header to reserve space for the connection
+    // pill / Enable button so its async arrival doesn't shift the theme
+    // picker on first paint. Pre-set when we have a cached status so the
+    // skeleton placeholder is skipped entirely for returning users.
+    workiqChecked: !!cached,
+    identity: { upn: seedUpn, display_name: seedDisplayName },
     identityLoading: false,
     enabling: false,
     briefing: null,
@@ -128,6 +148,12 @@ function wia() {
         theme === 'dark' ||
         (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       root.classList.toggle('dark', isDark);
+      // Always mark the resolved scheme on <html> so the inline boot CSS
+      // (which uses `html:not(.light)` under `prefers-color-scheme: dark`)
+      // does not override Tailwind's body color when the user picks light
+      // on a system that prefers dark — that override turned `currentColor`
+      // (and therefore every Heroicon) white.
+      root.classList.toggle('light', !isDark);
       if (!this._systemThemeMql) {
         this._systemThemeMql = window.matchMedia('(prefers-color-scheme: dark)');
         this._systemThemeMql.addEventListener('change', () => {
@@ -415,10 +441,25 @@ function wia() {
         const r = await fetch('/api/workiq/status');
         this.workiq = await r.json();
       } catch (e) { this.error = String(e); }
+      finally { this.workiqChecked = true; this._persistWorkIqCache(); }
       // Best-effort: pull the cached UPN immediately, then trigger a
       // background fetch the first time so the badge fills in without
       // blocking the rest of init().
       if (this.workiq.ready) this.refreshIdentity({ background: true });
+    },
+
+    // Persist enough of the workiq + identity state to render the header
+    // pill at its real size on the next boot, eliminating layout shift.
+    _persistWorkIqCache() {
+      try {
+        if (!window.localStorage) return;
+        const payload = {
+          ready: !!this.workiq.ready,
+          upn: (this.identity && this.identity.upn) || '',
+          displayName: (this.identity && this.identity.display_name) || '',
+        };
+        window.localStorage.setItem('wia-workiq-cache', JSON.stringify(payload));
+      } catch (e) { /* non-fatal */ }
     },
 
     async refreshIdentity({ force = false, background = false } = {}) {
@@ -433,6 +474,7 @@ function wia() {
           upn: data.upn || '',
           display_name: data.display_name || '',
         };
+        this._persistWorkIqCache();
       } catch (e) { /* non-fatal */ }
       finally { this.identityLoading = false; }
     },
