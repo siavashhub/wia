@@ -15,6 +15,19 @@ class Confidence(StrEnum):
     LOW = "low"
 
 
+class Impact(StrEnum):
+    """Business-impact tag for a time entry.
+
+    Drives WIA Review's "what to highlight" logic — high-impact items are
+    surfaced in talking points and insights, while low-impact items
+    (Internal / Admin / the user's own org) are de-emphasized.
+    """
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class Source(StrEnum):
     CALENDAR = "calendar"
     TEAMS = "teams"
@@ -45,6 +58,7 @@ class TimeEntry(BaseModel):
     category: str | None = None
     duration_hours: float
     confidence: Confidence = Confidence.MEDIUM
+    impact: Impact = Impact.MEDIUM
     week_of: str | None = None  # ISO date of week start (Monday)
     source_block_ids: list[int] = Field(default_factory=list)
     daily_hours: dict[str, float] = Field(default_factory=dict)
@@ -55,6 +69,7 @@ class TimeEntryUpdate(BaseModel):
     label: str | None = None
     category: str | None = None
     duration_hours: float | None = None
+    impact: Impact | None = None
 
 
 class BriefingTotals(BaseModel):
@@ -101,6 +116,7 @@ class TopLabel(BaseModel):
     category: str | None = None
     hours: float
     weeks_active: int
+    impact: Impact = Impact.MEDIUM
 
 
 class WeeklyPoint(BaseModel):
@@ -154,6 +170,7 @@ class Review(BaseModel):
     delta: ReviewDelta | None = None
     categories: list[CategoryBreakdown]
     top_labels: list[TopLabel]
+    high_impact_labels: list[TopLabel] = Field(default_factory=list)
     weekly_trend: list[WeeklyPoint]
     insights: list[Insight]
     talking_points: list[TalkingPoint]

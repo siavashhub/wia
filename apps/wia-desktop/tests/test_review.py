@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlmodel import select
 from wia.core import review as review_core
-from wia.core.types import Confidence, TimeEntry
+from wia.core.types import Confidence, Impact, TimeEntry
 from wia.storage import entries as entries_repo
 from wia.storage.db import get_session, init_db
 from wia.storage.models import TimeEntryRow
@@ -28,12 +28,14 @@ def _make(
     week_of: str,
     daily: dict[str, float],
     confidence: Confidence = Confidence.HIGH,
+    impact: Impact = Impact.MEDIUM,
 ) -> TimeEntry:
     return TimeEntry(
         label=label,
         category=category,
         duration_hours=round(sum(daily.values()), 4),
         confidence=confidence,
+        impact=impact,
         week_of=week_of,
         daily_hours=daily,
     )
@@ -165,3 +167,32 @@ def test_talking_points_cover_main_sections() -> None:
     assert {"achievements", "focus"} <= sections
     # An "asks" prompt is always included so the user has somewhere to start.
     assert any(p.section == "asks" for p in rv.talking_points)
+
+
+def test_high_impact_entry_surfaces_in_review() -> None:
+    """User-flagged HIGH-impact entries always make the review's
+    high_impact_labels list and lead the achievements talking points."""
+    entries_repo.create_entry(
+        _make(
+            label="Big launch",
+            category="Project Y",
+            week_of="2026-03-02",
+            daily={"2026-03-03": 2.0},  # only 2h — would never surface by hours
+            impact=Impact.HIGH,
+        )
+    )
+    # Plenty of routine work that would normally dominate.
+    entries_repo.create_entry(
+        _make(
+            label="Routine standups",
+            category="Internal",
+            week_of="2026-03-02",
+            daily={"2026-03-02": 6.0, "2026-03-03": 6.0, "2026-03-04": 6.0},
+        )
+    )
+    rv = review_core.build_monthly_review(2026, 3)
+    high = [t.label for t in rv.high_impact_labels]
+    assert "Big launch" in high
+    # First achievement talking point is the high-impact item.
+    achievements = [p.text for p in rv.talking_points if p.section == "achievements"]
+    assert achievements and "Big launch" in achievements[0]

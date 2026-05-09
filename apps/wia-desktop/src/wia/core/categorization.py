@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, tzinfo
 
-from wia.core.types import ActivityBlock, Confidence, Source, TimeEntry
+from wia.core.types import ActivityBlock, Confidence, Impact, Source, TimeEntry
 
 DEFAULT_KEYWORD_MAP: dict[str, str] = {
     # keyword (lowercase) -> category label
@@ -22,6 +22,42 @@ DEFAULT_KEYWORD_MAP: dict[str, str] = {
     "design review": "Design",
     "interview": "Recruiting",
 }
+
+# Categories that default to "low impact" — i.e. de-emphasized in WIA Review
+# unless the user explicitly tags an entry as high impact. Internal sprints,
+# standups, all-hands etc. live here; the user's own organization label
+# (e.g. "Microsoft") is appended at runtime.
+DEFAULT_LOW_IMPACT_CATEGORIES: frozenset[str] = frozenset({"internal", "admin"})
+
+
+def default_impact_for_category(
+    category: str | None,
+    *,
+    organization_label: str | None = None,
+    extra_low_impact: Iterable[str] = (),
+) -> Impact:
+    """Return the default :class:`Impact` for an entry with ``category``.
+
+    - ``Internal`` and ``Admin`` (case-insensitive) → :attr:`Impact.LOW`.
+    - The user's organization label (e.g. ``"Microsoft"``) → :attr:`Impact.LOW`.
+    - Anything else → :attr:`Impact.MEDIUM`.
+    """
+    if not category:
+        return Impact.MEDIUM
+    cat_lower = category.strip().lower()
+    if not cat_lower:
+        return Impact.MEDIUM
+    low_set = set(DEFAULT_LOW_IMPACT_CATEGORIES)
+    if organization_label:
+        org_lower = organization_label.strip().lower()
+        if org_lower:
+            low_set.add(org_lower)
+    for extra in extra_low_impact:
+        if isinstance(extra, str) and extra.strip():
+            low_set.add(extra.strip().lower())
+    if cat_lower in low_set:
+        return Impact.LOW
+    return Impact.MEDIUM
 
 
 def _classify_title(title: str, keyword_map: dict[str, str]) -> str | None:
@@ -81,11 +117,17 @@ def aggregate_entries(
     keyword_map: dict[str, str] | None = None,
     internal_domains: set[str] | None = None,
     tz: tzinfo | None = None,
+    organization_label: str | None = None,
 ) -> list[TimeEntry]:
     """Aggregate blocks into TimeEntry rows by (label, category).
 
     ``tz`` controls which calendar day a block is attributed to in
     ``daily_hours``. Defaults to the system local timezone.
+
+    ``organization_label`` is the user's own org name (derived from their
+    sign-in domain, e.g. ``"Microsoft"``). Categories matching it default
+    to :attr:`Impact.LOW` alongside the built-in ``Internal``/``Admin``
+    buckets.
     """
     if tz is None:
         tz = datetime.now().astimezone().tzinfo
@@ -110,6 +152,7 @@ def aggregate_entries(
                 category=category,
                 duration_hours=round(hours, 2),
                 confidence=conf,
+                impact=default_impact_for_category(category, organization_label=organization_label),
                 source_block_ids=[b.id for b in group if b.id is not None],
                 daily_hours={k: round(v, 2) for k, v in daily.items()},
             )

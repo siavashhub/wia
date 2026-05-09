@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 from datetime import UTC, date, datetime
 
@@ -95,6 +96,33 @@ def _is_private_meeting(block: ActivityBlock) -> bool:
     return sensitivity in PRIVATE_SENSITIVITIES
 
 
+_EMAIL_DOMAIN_RE = re.compile(r"@([^>\s]+)")
+
+
+def _derive_organization_from_blocks(blocks: list[ActivityBlock]) -> str | None:
+    """Guess the user's organization label from observed participant emails.
+
+    Picks the most common email domain across all blocks (the user's own
+    organization is overwhelmingly the most-seen domain in their meeting
+    invites) and converts it to a human label via
+    :func:`wia.api.prefs.derive_organization_label_from_domain`. Returns
+    ``None`` when there is no participant data to work from.
+    """
+    from wia.api.prefs import derive_organization_label_from_domain
+
+    counts: dict[str, int] = defaultdict(int)
+    for b in blocks:
+        for raw in b.participants:
+            m = _EMAIL_DOMAIN_RE.search(raw or "")
+            if not m:
+                continue
+            counts[m.group(1).lower()] += 1
+    if not counts:
+        return None
+    top_domain = max(counts.items(), key=lambda kv: kv[1])[0]
+    return derive_organization_label_from_domain(top_domain) or None
+
+
 async def build_briefing(
     *,
     week_of: date | None = None,
@@ -153,6 +181,9 @@ async def build_briefing(
         get_exclude_private_meetings,
         get_excluded_calendar_categories,
         get_excluded_keywords,
+        get_organization_label,
+        is_organization_auto,
+        set_organization_label,
     )
 
     excluded_keywords = [kw.lower() for kw in get_excluded_keywords() if kw.strip()]
@@ -255,8 +286,19 @@ async def build_briefing(
     else:
         all_blocks = []
 
+    # Auto-derive the user's organization label from the most common
+    # participant email domain so default Impact assignment knows which
+    # categories to mark as Low. Only writes when the user has not
+    # explicitly set one (or has only an auto-derived one we can refine).
+    organization_label = get_organization_label()
+    if (not organization_label or is_organization_auto()) and raw_blocks:
+        derived = _derive_organization_from_blocks(raw_blocks)
+        if derived and derived != organization_label:
+            set_organization_label(derived, auto=True)
+            organization_label = derived
+
     # 3. Categorize → entries
-    entries = aggregate_entries(all_blocks)
+    entries = aggregate_entries(all_blocks, organization_label=organization_label or None)
     for e in entries:
         e.week_of = week_iso
 

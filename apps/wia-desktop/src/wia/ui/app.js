@@ -12,7 +12,7 @@ function wia() {
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
     minWeekOffset: -52, // allow up to 1 year of history
-    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], exclude_private_meetings: false },
+    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], exclude_private_meetings: false, organization_label: '', organization_label_auto: false },
     availableSignals: [
       { key: 'calendar', label: 'Calendar', icon: 'calendar-days' },
       { key: 'teams', label: 'Teams', icon: 'chat-bubble-left-right' },
@@ -20,6 +20,7 @@ function wia() {
     ],
     newExcludedKeyword: '',
     newExcludedCategory: '',
+    organizationDraft: '',
     // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
     // via x-html so the icon inherits currentColor like Tailwind text.
     icon(name, classes) {
@@ -249,12 +250,92 @@ function wia() {
       try {
         const r = await fetch('/api/prefs');
         this.prefs = await r.json();
+        this.organizationDraft = this.prefs.organization_label || '';
         try {
           if (this.prefs && this.prefs.theme) {
             window.localStorage && window.localStorage.setItem('wia-theme', this.prefs.theme);
           }
         } catch (e) { /* ignore */ }
       } catch (e) { /* keep defaults */ }
+    },
+
+    async saveOrganization() {
+      const next = (this.organizationDraft || '').trim();
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ organization_label: next }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+        this.organizationDraft = this.prefs.organization_label || '';
+      } catch (e) { this.error = `Save organization failed: ${e}`; }
+    },
+
+    // ---- Impact ---------------------------------------------------------
+    impactLabel(impact) {
+      switch (impact) {
+        case 'high': return 'High';
+        case 'low': return 'Low';
+        default: return 'Med';
+      }
+    },
+
+    impactBadgeClass(impact) {
+      switch (impact) {
+        case 'high':
+          return 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-700';
+        case 'low':
+          return 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700';
+        default:
+          return 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-200 dark:ring-indigo-800';
+      }
+    },
+
+    impactSegmentClass(value, current) {
+      const active = (current || 'medium') === value;
+      if (!active) {
+        return 'bg-white text-slate-500 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800';
+      }
+      switch (value) {
+        case 'high':
+          return 'bg-amber-500 text-white dark:bg-amber-600';
+        case 'low':
+          return 'bg-slate-400 text-white dark:bg-slate-500';
+        default:
+          return 'bg-indigo-500 text-white dark:bg-indigo-600';
+      }
+    },
+
+    async setImpact(entry, value) {
+      if (!entry) return;
+      const current = entry.impact || 'medium';
+      if (current === value) return;
+      const previous = entry.impact;
+      entry.impact = value;
+      try {
+        const r = await fetch(`/api/entries/${entry.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ impact: value }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch (e) {
+        entry.impact = previous;
+        this.error = `Save impact failed: ${e}`;
+      }
+    },
+
+    groupImpactSummary(group) {
+      const counts = { high: 0, medium: 0, low: 0 };
+      for (const e of group.entries) {
+        const k = e.impact || 'medium';
+        if (counts[k] !== undefined) counts[k] += 1;
+      }
+      if (counts.high) return `${counts.high} high`;
+      if (counts.medium) return `${counts.medium} med`;
+      return `${counts.low} low`;
     },
 
     // ---- Week navigation -------------------------------------------------

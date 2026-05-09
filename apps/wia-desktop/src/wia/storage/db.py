@@ -26,6 +26,7 @@ def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
     # Lightweight migrations for columns added after first release.
     _add_column_if_missing("time_entry", "daily_hours", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing("time_entry", "impact", "TEXT NOT NULL DEFAULT 'medium'")
 
 
 def get_session() -> Session:

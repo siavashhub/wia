@@ -32,6 +32,7 @@ class TimeEntryRow(SQLModel, table=True):
     source_block_ids: str = ""  # comma-joined ints
     user_edited: bool = False
     daily_hours: str = ""  # JSON-encoded dict[str, float]
+    impact: str = "medium"  # "high" | "medium" | "low"
 
 
 class UserPref(SQLModel, table=True):

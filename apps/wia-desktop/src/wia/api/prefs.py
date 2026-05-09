@@ -19,6 +19,8 @@ PREF_SIGNALS = "enabled_signals"
 PREF_EXCLUDED_KEYWORDS = "excluded_keywords"
 PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
 PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
+PREF_ORGANIZATION = "organization_label"
+PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
 
 # Sensitivity values (Outlook) considered "private" for the toggle.
 PRIVATE_SENSITIVITIES = frozenset({"private", "personal", "confidential"})
@@ -29,6 +31,7 @@ MAX_EXCLUDED_KEYWORDS = 100
 MAX_KEYWORD_LENGTH = 100
 MAX_EXCLUDED_CATEGORIES = 100
 MAX_CATEGORY_LENGTH = 100
+MAX_ORGANIZATION_LENGTH = 100
 
 
 def _read_signals() -> list[str]:
@@ -182,12 +185,57 @@ def get_exclude_private_meetings() -> bool:
     return _read_exclude_private()
 
 
+def get_organization_label() -> str:
+    """Public helper: the user's organization label (e.g. ``"Microsoft"``).
+
+    Empty string when the user has not set / auto-derived one yet.
+    """
+    return (prefs_store.get_pref(PREF_ORGANIZATION) or "").strip()
+
+
+def is_organization_auto() -> bool:
+    """True when the stored organization label was auto-derived from observed
+    participant domains (i.e. the user has not explicitly set one)."""
+    raw = prefs_store.get_pref(PREF_ORGANIZATION_AUTO) or ""
+    return raw.strip() in {"1", "true", "yes"}
+
+
+def set_organization_label(label: str, *, auto: bool) -> None:
+    """Persist the organization label and whether it was auto-derived."""
+    cleaned = (label or "").strip()
+    prefs_store.set_pref(PREF_ORGANIZATION, cleaned[:MAX_ORGANIZATION_LENGTH])
+    prefs_store.set_pref(PREF_ORGANIZATION_AUTO, "1" if auto else "0")
+
+
+def derive_organization_label_from_domain(domain: str) -> str:
+    """Convert an email domain (``"microsoft.com"``) to a human label
+    (``"Microsoft"``).
+
+    Strips the TLD and any leading ``mail.`` / ``corp.`` style prefixes
+    so ``corp.microsoft.com`` -> ``"Microsoft"``.
+    """
+    raw = (domain or "").strip().lower()
+    if not raw:
+        return ""
+    parts = [p for p in raw.split(".") if p]
+    # Drop common subdomain prefixes used for email routing.
+    while parts and parts[0] in {"mail", "corp", "smtp", "exch", "outlook"}:
+        parts = parts[1:]
+    if not parts:
+        return ""
+    # The "head" piece is the org name; e.g. ``microsoft.com`` -> ``microsoft``.
+    head = parts[0]
+    return head.replace("-", " ").title()
+
+
 class Prefs(BaseModel):
     theme: str = "system"
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
     excluded_keywords: list[str] = Field(default_factory=list)
     excluded_calendar_categories: list[str] = Field(default_factory=list)
     exclude_private_meetings: bool = False
+    organization_label: str = ""
+    organization_label_auto: bool = False
 
 
 class PrefsUpdate(BaseModel):
@@ -196,6 +244,7 @@ class PrefsUpdate(BaseModel):
     excluded_keywords: list[str] | None = None
     excluded_calendar_categories: list[str] | None = None
     exclude_private_meetings: bool | None = None
+    organization_label: str | None = None
 
 
 @router.get("")
@@ -206,6 +255,8 @@ async def get_prefs() -> Prefs:
         excluded_keywords=_read_excluded_keywords(),
         excluded_calendar_categories=_read_excluded_categories(),
         exclude_private_meetings=_read_exclude_private(),
+        organization_label=get_organization_label(),
+        organization_label_auto=is_organization_auto(),
     )
 
 
@@ -238,4 +289,15 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
         prefs_store.set_pref(
             PREF_EXCLUDE_PRIVATE, "true" if update.exclude_private_meetings else "false"
         )
+    if update.organization_label is not None:
+        cleaned_org = update.organization_label.strip()
+        if len(cleaned_org) > MAX_ORGANIZATION_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"organization_label exceeds {MAX_ORGANIZATION_LENGTH} chars",
+            )
+        # Any explicit set (including clearing) marks the value as
+        # user-confirmed so the orchestrator won't overwrite it on the
+        # next scan's auto-derive pass.
+        set_organization_label(cleaned_org, auto=False)
     return await get_prefs()

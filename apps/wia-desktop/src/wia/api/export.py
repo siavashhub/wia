@@ -62,7 +62,7 @@ def _entries_csv(week_of: str | None) -> str:
     days = _week_days(week_of)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    header = ["category", "label", "duration_hours", "confidence", "week_of", *days]
+    header = ["category", "label", "duration_hours", "confidence", "impact", "week_of", *days]
     writer.writerow(header)
     # Group rows by category so the CSV mirrors the UI layout.
     for category, group in _group_by_category(entries).items():
@@ -72,6 +72,7 @@ def _entries_csv(week_of: str | None) -> str:
                 e.label,
                 f"{e.duration_hours:.2f}",
                 _confidence(e.confidence),
+                e.impact.value,
                 e.week_of or "",
                 *[f"{e.daily_hours.get(d, 0):.2f}" for d in days],
             ]
@@ -291,6 +292,17 @@ def _review_markdown(rv: Review) -> str:
         lines.append("## Top initiatives")
         for t in rv.top_labels:
             cat = f" · _{t.category}_" if t.category else ""
+            star = "⭐ " if t.impact == "high" else ""
+            lines.append(
+                f"- {star}**{t.label}** — {t.hours:.0f}h across "
+                f"{t.weeks_active} week{'s' if t.weeks_active != 1 else ''}{cat}"
+            )
+        lines.append("")
+
+    if rv.high_impact_labels:
+        lines.append("## High-impact items ⭐")
+        for t in rv.high_impact_labels:
+            cat = f" · _{t.category}_" if t.category else ""
             lines.append(
                 f"- **{t.label}** — {t.hours:.0f}h across "
                 f"{t.weeks_active} week{'s' if t.weeks_active != 1 else ''}{cat}"
@@ -380,6 +392,18 @@ def _review_html(rv: Review) -> str:
     if rv.top_labels:
         parts.append("<h3>Top initiatives</h3><ul>")
         for t in rv.top_labels:
+            cat = f" — <em>{html.escape(t.category)}</em>" if t.category else ""
+            star = "⭐ " if t.impact == "high" else ""
+            parts.append(
+                f"<li>{star}<strong>{html.escape(t.label)}</strong>{cat} — "
+                f"{t.hours:.0f}h across {t.weeks_active} week"
+                f"{'s' if t.weeks_active != 1 else ''}</li>"
+            )
+        parts.append("</ul>")
+
+    if rv.high_impact_labels:
+        parts.append("<h3>High-impact items ⭐</h3><ul>")
+        for t in rv.high_impact_labels:
             cat = f" — <em>{html.escape(t.category)}</em>" if t.category else ""
             parts.append(
                 f"<li><strong>{html.escape(t.label)}</strong>{cat} — "

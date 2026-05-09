@@ -315,6 +315,34 @@
           <span class="text-slate-400 dark:text-slate-500">· applies to the next scan</span>
         </div>
 
+        <!-- Organization label ---------------------------------------------- -->
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            class="text-slate-500 dark:text-slate-400"
+            title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review."
+          >Your organization:</span>
+          <form class="inline-flex items-center gap-1" @submit.prevent="saveOrganization()">
+            <input
+              type="text"
+              x-model="organizationDraft"
+              :placeholder="'e.g. Microsoft'"
+              maxlength="100"
+              class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+              :aria-label="'Organization label'"
+            />
+            <button
+              type="submit"
+              :disabled="organizationDraft === (prefs.organization_label || '')"
+              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
+            >Save</button>
+          </form>
+          <template x-if="prefs.organization_label_auto && prefs.organization_label">
+            <span class="text-slate-400 dark:text-slate-500">· auto-detected from your sign-in domain</span>
+          </template>
+          <template x-if="!prefs.organization_label">
+            <span class="text-slate-400 dark:text-slate-500">· will be auto-detected after the next scan</span>
+          </template>
+        </div>
         <div x-show="isScanningCurrent()" x-cloak class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
           <span class="font-medium text-indigo-600 dark:text-indigo-400">Scanning:</span>
           <template x-for="key in (prefs.enabled_signals || [])" :key="'scanning-' + key">
@@ -587,6 +615,7 @@
                 </template>
                 <th class="px-3 text-right">Total</th>
                 <th class="px-3 text-center">Conf.</th>
+                <th class="px-3 text-center">Impact</th>
                 <th class="w-12"></th>
               </tr>
             </thead>
@@ -632,6 +661,35 @@
                         <span class="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800" x-text="row.entry.confidence"></span>
                       </template>
                     </td>
+                    <!-- Impact -->
+                    <td class="px-3 text-center">
+                      <template x-if="row.kind === 'group'">
+                        <span class="text-[11px] text-slate-500 dark:text-slate-400" x-text="groupImpactSummary(group)"></span>
+                      </template>
+                      <template x-if="row.kind === 'sub'">
+                        <div
+                          class="inline-flex overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600"
+                          role="group"
+                          :aria-label="'Impact for ' + (row.entry.label || 'entry')"
+                        >
+                          <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="opt.v">
+                            <button
+                              type="button"
+                              @click="setImpact(row.entry, opt.v)"
+                              :class="impactSegmentClass(opt.v, row.entry.impact)"
+                              :aria-pressed="(row.entry.impact || 'medium') === opt.v"
+                              :title="opt.l + ' impact'"
+                              class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
+                            >
+                              <template x-if="opt.v === 'high' && (row.entry.impact || 'medium') === 'high'">
+                                <span x-html="icon('star', 'h-3 w-3')"></span>
+                              </template>
+                              <span x-text="opt.l"></span>
+                            </button>
+                          </template>
+                        </div>
+                      </template>
+                    </td>
                     <!-- Delete -->
                     <td class="text-center">
                       <template x-if="row.kind === 'sub'">
@@ -643,7 +701,7 @@
               </template>
               <template x-if="!briefing?.entries?.length">
                 <tr>
-                  <td :colspan="5 + dayLabels.length" class="py-0">
+                  <td :colspan="6 + dayLabels.length" class="py-0">
                     <!-- Skeleton rows during the very first paint -->
                     <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
                       <div class="space-y-2 py-4">
@@ -718,7 +776,7 @@
                     <td class="px-2 text-right tabular-nums" x-text="dayTotal(i)"></td>
                   </template>
                   <td class="px-3 text-right tabular-nums" x-text="weekTotal()"></td>
-                  <td colspan="2"></td>
+                  <td colspan="3"></td>
                 </tr>
               </tfoot>
             </template>
@@ -872,7 +930,12 @@
               <template x-for="t in review.top_labels" :key="t.label">
                 <li class="flex items-start justify-between border-b py-1.5 dark:border-slate-700">
                   <div class="min-w-0 pr-3">
-                    <div class="truncate" x-text="t.label" :title="t.label"></div>
+                    <div class="truncate flex items-center gap-1">
+                      <template x-if="t.impact === 'high'">
+                        <span class="text-amber-500" x-html="icon('star', 'h-3.5 w-3.5')"></span>
+                      </template>
+                      <span x-text="t.label" :title="t.label"></span>
+                    </div>
                     <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
                   </div>
                   <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
@@ -882,6 +945,26 @@
             </ul>
           </section>
         </div>
+
+        <!-- High-impact items (user-flagged) -->
+        <section x-show="review && review.high_impact_labels && review.high_impact_labels.length" class="rounded-lg border-2 border-amber-300 bg-amber-50/60 p-6 shadow-sm dark:border-amber-700 dark:bg-amber-950/30">
+          <div class="flex items-center gap-2">
+            <span class="text-amber-500" x-html="icon('star', 'h-5 w-5')"></span>
+            <h3 class="font-semibold">High-impact items</h3>
+            <span class="text-xs text-slate-500 dark:text-slate-400">· flagged in WIA Briefing</span>
+          </div>
+          <ul class="mt-3 space-y-1 text-sm">
+            <template x-for="t in (review?.high_impact_labels || [])" :key="'hi-' + t.label">
+              <li class="flex items-start justify-between border-b border-amber-200 py-1.5 dark:border-amber-800">
+                <div class="min-w-0 pr-3">
+                  <div class="truncate font-medium" x-text="t.label" :title="t.label"></div>
+                  <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                </div>
+                <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+              </li>
+            </template>
+          </ul>
+        </section>
 
         <!-- Insights -->
         <section x-show="review && review.insights && review.insights.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">

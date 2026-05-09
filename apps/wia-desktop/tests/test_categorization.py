@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 
-from wia.core.categorization import aggregate_entries, categorize
-from wia.core.types import ActivityBlock, Confidence, Source
+from wia.core.categorization import (
+    aggregate_entries,
+    categorize,
+    default_impact_for_category,
+)
+from wia.core.types import ActivityBlock, Confidence, Impact, Source
 
 
 def _b(title, participants=(), source=Source.CALENDAR, hours=1.0):
@@ -48,3 +52,31 @@ def test_aggregate_groups_by_label():
     assert any("Standup" in k for k in by_label)
     standup_hours = next(v for k, v in by_label.items() if "Standup" in k)
     assert standup_hours == 1.0
+
+
+def test_default_impact_internal_admin_low():
+    assert default_impact_for_category("Internal") is Impact.LOW
+    assert default_impact_for_category("admin") is Impact.LOW
+    assert default_impact_for_category("Design") is Impact.MEDIUM
+    assert default_impact_for_category(None) is Impact.MEDIUM
+
+
+def test_default_impact_organization_label_low():
+    # User's own org categories also default to Low.
+    assert default_impact_for_category("Microsoft", organization_label="Microsoft") is Impact.LOW
+    # Case-insensitive match.
+    assert default_impact_for_category("microsoft", organization_label="Microsoft") is Impact.LOW
+    # Other categories untouched.
+    assert default_impact_for_category("Client A", organization_label="Microsoft") is Impact.MEDIUM
+
+
+def test_aggregate_assigns_default_impact():
+    blocks = [
+        _b("Standup"),  # → Internal → LOW
+        _b("Design review"),  # → Design → MEDIUM
+        _b("Microsoft sync"),  # title contains nothing matching keyword map → category "Internal"
+    ]
+    entries = aggregate_entries(blocks, organization_label="Microsoft")
+    by_cat = {e.category: e.impact for e in entries}
+    assert by_cat["Internal"] is Impact.LOW
+    assert by_cat["Design"] is Impact.MEDIUM

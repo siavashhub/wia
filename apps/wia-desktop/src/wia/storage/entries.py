@@ -6,7 +6,7 @@ import json
 
 from sqlmodel import select
 
-from wia.core.types import Confidence, TimeEntry, TimeEntryUpdate
+from wia.core.types import Confidence, Impact, TimeEntry, TimeEntryUpdate
 from wia.storage.db import get_session
 from wia.storage.models import TimeEntryRow
 
@@ -18,12 +18,17 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
             daily = {}
     except json.JSONDecodeError:
         daily = {}
+    try:
+        impact = Impact(row.impact) if row.impact else Impact.MEDIUM
+    except ValueError:
+        impact = Impact.MEDIUM
     return TimeEntry(
         id=row.id,
         label=row.label,
         category=row.category,
         duration_hours=row.duration_hours,
         confidence=Confidence(row.confidence),
+        impact=impact,
         week_of=row.week_of,
         source_block_ids=[int(x) for x in row.source_block_ids.split(",") if x],
         daily_hours=daily,
@@ -41,6 +46,7 @@ def _entry_to_row(entry: TimeEntry, *, user_edited: bool = False) -> TimeEntryRo
         source_block_ids=",".join(str(i) for i in entry.source_block_ids),
         user_edited=user_edited,
         daily_hours=json.dumps(entry.daily_hours or {}),
+        impact=entry.impact.value,
     )
 
 
