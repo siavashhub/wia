@@ -114,13 +114,24 @@ def delete_entry(entry_id: int) -> bool:
 
 
 def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
-    """Delete non-edited entries for a week and insert fresh rows."""
+    """Delete non-edited entries for a week and insert fresh rows.
+
+    User-edited rows are preserved across rescans. To avoid showing two
+    rows for the same activity (one edited, one freshly aggregated) we
+    skip inserting any new entry whose ``(label, category)`` collides
+    with a kept user-edited row \u2014 the user's edit wins.
+    """
     with get_session() as session:
         existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
+        kept_keys: set[tuple[str, str | None]] = set()
         for row in existing:
-            if not row.user_edited:
+            if row.user_edited:
+                kept_keys.add((row.label, row.category))
+            else:
                 session.delete(row)
         for entry in entries:
+            if (entry.label, entry.category) in kept_keys:
+                continue
             entry.week_of = week_of
             new_row = _entry_to_row(entry)
             new_row.id = None

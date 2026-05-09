@@ -174,3 +174,99 @@ async def test_exclude_private_meetings_drops_private_blocks():
     labels = " ".join(e.label for e in briefing.entries).lower()
     assert "therapy" not in labels
     assert any("Sprint planning" in e.label for e in briefing.entries)
+
+
+@pytest.mark.asyncio
+async def test_exclude_private_meetings_uses_title_fallback():
+    """When Copilot omits the sensitivity field, common Outlook private-event
+    titles still get filtered."""
+    from datetime import datetime
+
+    from wia.api.prefs import PREF_EXCLUDE_PRIVATE
+    from wia.storage import prefs as prefs_store
+
+    fake_blocks = [
+        ActivityBlock(
+            start=datetime(2026, 4, 20, 10, 0, tzinfo=UTC),
+            end=datetime(2026, 4, 20, 11, 0, tzinfo=UTC),
+            title="Sprint planning",
+            participants=["a@contoso.com"],
+            source=Source.CALENDAR,
+            confidence=Confidence.HIGH,
+        ),
+        ActivityBlock(
+            start=datetime(2026, 4, 21, 14, 0, tzinfo=UTC),
+            end=datetime(2026, 4, 21, 14, 30, tzinfo=UTC),
+            title="Private appointment",
+            participants=[],
+            source=Source.CALENDAR,
+            confidence=Confidence.HIGH,
+        ),
+        ActivityBlock(
+            start=datetime(2026, 4, 22, 9, 0, tzinfo=UTC),
+            end=datetime(2026, 4, 22, 9, 30, tzinfo=UTC),
+            title="Personal: errand",
+            participants=[],
+            source=Source.CALENDAR,
+            confidence=Confidence.HIGH,
+        ),
+    ]
+
+    prefs_store.set_pref(PREF_EXCLUDE_PRIVATE, "true")
+    try:
+        with patch("wia.core.orchestrator.get_workiq_client") as mock_get:
+            client = AsyncMock()
+            client.fetch_calendar_blocks = AsyncMock(return_value=fake_blocks)
+            mock_get.return_value = client
+            briefing = await build_briefing(week_of=date(2026, 4, 22), refresh=True)
+    finally:
+        prefs_store.set_pref(PREF_EXCLUDE_PRIVATE, "false")
+
+    labels = " ".join(e.label for e in briefing.entries).lower()
+    assert "private appointment" not in labels
+    assert "errand" not in labels
+    assert any("Sprint planning" in e.label for e in briefing.entries)
+
+
+@pytest.mark.asyncio
+async def test_rescan_does_not_duplicate_user_edited_entries():
+    """A user-edited entry must not produce a second row when the next scan
+    re-aggregates the same (label, category)."""
+    from datetime import datetime
+
+    from wia.storage import entries as entries_repo
+
+    fake_blocks = [
+        ActivityBlock(
+            start=datetime(2026, 4, 20, 10, 0, tzinfo=UTC),
+            end=datetime(2026, 4, 20, 11, 0, tzinfo=UTC),
+            title="Sprint planning",
+            participants=["a@contoso.com"],
+            source=Source.CALENDAR,
+            confidence=Confidence.HIGH,
+        ),
+    ]
+
+    with patch("wia.core.orchestrator.get_workiq_client") as mock_get:
+        client = AsyncMock()
+        client.fetch_calendar_blocks = AsyncMock(return_value=fake_blocks)
+        mock_get.return_value = client
+        first = await build_briefing(week_of=date(2026, 4, 22), refresh=True)
+
+    target = next(e for e in first.entries if "Sprint planning" in e.label)
+    from wia.core.types import TimeEntryUpdate
+
+    entries_repo.update_entry(target.id, TimeEntryUpdate(duration_hours=2.5))
+
+    with patch("wia.core.orchestrator.get_workiq_client") as mock_get:
+        client = AsyncMock()
+        client.fetch_calendar_blocks = AsyncMock(return_value=fake_blocks)
+        mock_get.return_value = client
+        second = await build_briefing(week_of=date(2026, 4, 22), refresh=True)
+
+    matching = [
+        e for e in second.entries if e.label == target.label and e.category == target.category
+    ]
+    assert len(matching) == 1
+    # The user's edited duration must survive the rescan.
+    assert matching[0].duration_hours == 2.5

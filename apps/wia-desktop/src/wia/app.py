@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 UI_DIR = Path(__file__).parent / "ui"
 _NO_STORE = {"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"}
-_ASSET_RE = re.compile(r'(/static/[A-Za-z0-9_./-]+\.(?:css|js|png))')
+_ASSET_RE = re.compile(r"(/static/[A-Za-z0-9_./-]+\.(?:css|js|png))")
 
 
 def _render_index() -> str:

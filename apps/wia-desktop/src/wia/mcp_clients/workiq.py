@@ -266,9 +266,13 @@ class WorkIQClient:
             "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
             '"organizer":"email","participants":["email"],"isOnline":true,'
-            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential"}]}. '
-            "Include the event's Outlook categories array (empty array if none) "
-            "and its sensitivity (one of normal, personal, private, confidential). "
+            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
+            '"isPrivate":true}]}. '
+            "Always include the event's Outlook categories array (use [] if none). "
+            "Always include the sensitivity field — it is one of normal, personal, "
+            "private, or confidential. If the event is marked Private in Outlook, "
+            "set sensitivity to 'private' AND set isPrivate to true. Do not omit "
+            "sensitivity even if the value is 'normal'. "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are no events, return {"events":[]}.'
         )
@@ -585,10 +589,13 @@ def _event_to_block(
     # Sensitivity (Outlook): normal | personal | private | confidential.
     # Some sources may provide ``isPrivate`` instead.
     sensitivity = ev.get("sensitivity")
-    if not sensitivity and ev.get("isPrivate") is True:
+    is_private_flag = ev.get("isPrivate") is True or ev.get("is_private") is True
+    if not sensitivity and is_private_flag:
         sensitivity = "private"
     if isinstance(sensitivity, str) and sensitivity.strip():
         metadata["sensitivity"] = sensitivity.strip().lower()
+    if is_private_flag:
+        metadata["is_private"] = "true"
     return ActivityBlock(
         start=start,
         end=end,

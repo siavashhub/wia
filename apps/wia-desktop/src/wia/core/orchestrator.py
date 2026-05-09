@@ -86,14 +86,40 @@ def _matches_excluded_category(block: ActivityBlock, categories_lower: set[str])
 
 
 def _is_private_meeting(block: ActivityBlock) -> bool:
-    """True when a calendar block is marked as private/personal/confidential."""
+    """True when a calendar block is marked as private/personal/confidential.
+
+    Microsoft Copilot is inconsistent about returning the ``sensitivity``
+    field even when explicitly asked, so we also fall back to a few
+    well-known title patterns Outlook uses when an event is marked
+    Private (the body and attendees get redacted but the subject often
+    survives as ``"Private appointment"`` or starts with ``"Private:"``).
+    """
     # Imported lazily to avoid a circular import at module load time.
     from wia.api.prefs import PRIVATE_SENSITIVITIES
 
     if block.source is not Source.CALENDAR:
         return False
     sensitivity = (block.metadata.get("sensitivity") or "").lower()
-    return sensitivity in PRIVATE_SENSITIVITIES
+    if sensitivity in PRIVATE_SENSITIVITIES:
+        return True
+    if (block.metadata.get("is_private") or "").lower() in {"1", "true", "yes"}:
+        return True
+    title = (block.title or "").strip().lower()
+    if not title:
+        return False
+    # Common Outlook / Copilot fallbacks when the body is redacted.
+    private_titles = {
+        "private",
+        "private appointment",
+        "private event",
+        "personal",
+        "personal appointment",
+        "confidential",
+    }
+    if title in private_titles:
+        return True
+    private_prefixes = ("private:", "private -", "personal:", "personal -", "confidential:")
+    return title.startswith(private_prefixes)
 
 
 _EMAIL_DOMAIN_RE = re.compile(r"@([^>\s]+)")
