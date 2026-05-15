@@ -60,6 +60,18 @@ function wia() {
     historyRange: '7d', // '7d' | '30d' | 'all'
     historyView: 'flat', // 'flat' | 'weekly'
     historyExpandedWeeks: {}, // { [week_of]: boolean }
+    // Global Scans slide-over: unifies schedule + last-scan status +
+    // running-scan banners + scan history + Review's missing-weeks panel
+    // behind a single header icon. State lives on the root x-data so any
+    // view (Briefing / Review) can open it and the panel can read the
+    // shared `review`, `schedule`, `history` slices directly.
+    scansOpen: false,
+    scansTab: 'status', // 'status' | 'history' | 'missing'
+    // Global Preferences slide-over: owns scan filters (exclusions,
+    // high-impact keywords, organization). Decoupled from Briefing so
+    // Review and future surfaces can reference the same controls.
+    prefsOpen: false,
+    prefsTab: 'exclude', // 'exclude' | 'impact' | 'org'
     appVersion: '',
     expanded: {}, // { [category]: boolean }
     dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -835,6 +847,34 @@ function wia() {
     async toggleHistory() {
       this.historyOpen = !this.historyOpen;
       if (this.historyOpen) await this.loadHistory();
+    },
+
+    // ---- Scans slide-over -----------------------------------------------
+    // Open the global Scans panel. Eagerly refreshes schedule + history so
+    // the user sees fresh data rather than the 30s-polled snapshot.
+    async openScans(tab) {
+      this.scansOpen = true;
+      if (tab) this.scansTab = tab;
+      this.historyOpen = true;
+      // Fan out: schedule is cheap, history is paged. Both are safe in
+      // parallel since they hit different endpoints.
+      await Promise.all([this.loadSchedule(), this.loadHistory()]);
+    },
+
+    closeScans() { this.scansOpen = false; },
+
+    // ---- Preferences slide-over ----------------------------------------
+    openPrefs(tab) {
+      if (tab) this.prefsTab = tab;
+      this.prefsOpen = true;
+    },
+
+    closePrefs() { this.prefsOpen = false; },
+
+    // True when any scan-related activity is in flight. Used to draw a
+    // pulsing badge on the header Scans button.
+    hasActiveScan() {
+      return !!(this.scanningBriefing || this.reviewScanning);
     },
 
     setHistoryRange(range) {
