@@ -138,11 +138,40 @@ def test_aggregate_high_impact_keyword_promotes_entry():
     assert standup_entries and all(i is Impact.LOW for i in standup_entries)
 
 
-def test_aggregate_high_impact_keyword_matches_block_title():
-    # Keyword should match against constituent block titles even if the
-    # rolled-up label doesn't include it verbatim.
+def _bcat(title, categories, participants=(), hours=1.0):
+    """Build a calendar block with a ``|``-joined lowercase categories
+    metadata string, matching what the Work IQ MCP client emits."""
+    b = _b(title, participants=participants, source=Source.CALENDAR, hours=hours)
+    b.metadata["categories"] = "|".join(c.lower() for c in categories)
+    return b
+
+
+def test_aggregate_high_impact_category_promotes_entry():
+    # A calendar block tagged with a high-impact Outlook category gets
+    # promoted to HIGH even when its category would otherwise be LOW.
     blocks = [
-        _b("CEO escalation", participants=["ceo@client-a.com"]),
+        _bcat("Standup", categories=["Customer"]),  # Internal → LOW, but flagged
+        _b("Design review"),  # Design → MEDIUM
     ]
-    entries = aggregate_entries(blocks, high_impact_keywords=["ceo"])
+    entries = aggregate_entries(
+        blocks,
+        organization_label="Microsoft",
+        high_impact_categories=["customer"],
+    )
+    standup = next(e for e in entries if "Standup" in e.label)
+    assert standup.impact is Impact.HIGH
+    design = next(e for e in entries if "Design" in e.label)
+    assert design.impact is Impact.MEDIUM
+
+
+def test_aggregate_high_impact_category_case_insensitive():
+    blocks = [_bcat("Sync", categories=["customer"])]
+    entries = aggregate_entries(blocks, high_impact_categories=["Customer"])
     assert entries[0].impact is Impact.HIGH
+
+
+def test_aggregate_high_impact_category_no_match_keeps_default():
+    blocks = [_bcat("Standup", categories=["internal"])]
+    entries = aggregate_entries(blocks, high_impact_categories=["customer"])
+    assert entries[0].impact is Impact.LOW
+

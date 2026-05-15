@@ -288,11 +288,14 @@
                   x-text="'· ' + prefs.excluded_calendar_categories.length + ' excl. cat'"></span>
             <span x-show="(prefs.high_impact_keywords || []).length"
                   x-text="'· ' + prefs.high_impact_keywords.length + ' high-impact'"></span>
+            <span x-show="(prefs.high_impact_calendar_categories || []).length"
+                  x-text="'· ' + prefs.high_impact_calendar_categories.length + ' high-impact cat'"></span>
             <span x-show="prefs.exclude_private_meetings">· private excluded</span>
             <span x-show="prefs.organization_label" x-text="'· org: ' + prefs.organization_label"></span>
             <span x-show="!(prefs.excluded_keywords || []).length
                         && !(prefs.excluded_calendar_categories || []).length
                         && !(prefs.high_impact_keywords || []).length
+                        && !(prefs.high_impact_calendar_categories || []).length
                         && !prefs.exclude_private_meetings
                         && !prefs.organization_label"
                   class="italic">none configured</span>
@@ -1409,7 +1412,7 @@
             <p class="text-slate-500 dark:text-slate-400">
               Mark entries as High impact based on keywords in their title or
               rolled-up label or their categories. This is meant to help you quickly identify likely
-              important meetings in Briefing and Review, but use it with care —
+              important meetings in Briefing and Review, but use it with care,
               it can produce false positives and negatives, so we recommend
               starting with a few obvious keywords and adjusting over time as
               you see how it affects your Briefing.
@@ -1439,6 +1442,36 @@
                   maxlength="100"
                   class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
                   aria-label="Add high-impact keyword"
+                />
+              </div>
+            </div>
+
+            <!-- High-impact calendar categories -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose constituent calendar events carry any of these Outlook categories (case-insensitive) are marked High impact.">
+                <span>High-impact categories</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="cat in (prefs.high_impact_calendar_categories || [])" :key="'phicat-' + cat">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                    <span x-text="cat"></span>
+                    <button
+                      type="button"
+                      class="text-amber-700 hover:text-red-600 dark:text-amber-200 dark:hover:text-red-400"
+                      @click="removeHighImpactCategory(cat)"
+                      :aria-label="'Remove ' + cat"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newHighImpactCategory"
+                  @keydown.enter.prevent="addHighImpactCategory()"
+                  placeholder="e.g. Customer"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add high-impact calendar category"
                 />
               </div>
             </div>

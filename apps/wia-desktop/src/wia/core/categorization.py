@@ -131,6 +131,7 @@ def aggregate_entries(
     tz: tzinfo | None = None,
     organization_label: str | None = None,
     high_impact_keywords: Iterable[str] = (),
+    high_impact_categories: Iterable[str] = (),
 ) -> list[TimeEntry]:
     """Aggregate blocks into TimeEntry rows by (label, category).
 
@@ -145,6 +146,12 @@ def aggregate_entries(
     ``high_impact_keywords`` is a list of user-defined substrings that, when
     found (case-insensitive) in an entry's label or any constituent block
     title, force the entry's default impact to :attr:`Impact.HIGH`.
+
+    ``high_impact_categories`` is a list of Outlook calendar category names
+    that, when found on any constituent calendar block, force the entry's
+    default impact to :attr:`Impact.HIGH`. Matching is case-insensitive
+    against the ``categories`` block metadata written by the Work IQ MCP
+    client (a ``|``-joined lowercase string).
     """
     if tz is None:
         tz = datetime.now().astimezone().tzinfo
@@ -158,6 +165,11 @@ def aggregate_entries(
         for kw in (high_impact_keywords or ())
         if isinstance(kw, str) and kw.strip()
     ]
+    hi_cat_set = {
+        c.strip().lower()
+        for c in (high_impact_categories or ())
+        if isinstance(c, str) and c.strip()
+    }
 
     entries: list[TimeEntry] = []
     for (label, category), group in bucket.items():
@@ -178,18 +190,32 @@ def aggregate_entries(
             if b.title:
                 haystack_parts.append(b.title)
         haystack = "\n".join(haystack_parts)
+        impact = default_impact_for_category(
+            category,
+            organization_label=organization_label,
+            label=haystack,
+            high_impact_keywords=hi_kw_list,
+        )
+        # Promote to HIGH if any constituent calendar block carries an
+        # Outlook category the user has flagged as high-impact. Mirrors
+        # the keyword-based promotion above.
+        if impact is not Impact.HIGH and hi_cat_set:
+            for b in group:
+                if b.source is not Source.CALENDAR:
+                    continue
+                raw_cats = b.metadata.get("categories", "")
+                if not raw_cats:
+                    continue
+                if any(part for part in raw_cats.split("|") if part in hi_cat_set):
+                    impact = Impact.HIGH
+                    break
         entries.append(
             TimeEntry(
                 label=label,
                 category=category,
                 duration_hours=round(hours, 2),
                 confidence=conf,
-                impact=default_impact_for_category(
-                    category,
-                    organization_label=organization_label,
-                    label=haystack,
-                    high_impact_keywords=hi_kw_list,
-                ),
+                impact=impact,
                 source_block_ids=[b.id for b in group if b.id is not None],
                 daily_hours={k: round(v, 2) for k, v in daily.items()},
             )

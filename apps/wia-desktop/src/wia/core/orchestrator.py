@@ -207,6 +207,7 @@ async def build_briefing(
         get_exclude_private_meetings,
         get_excluded_calendar_categories,
         get_excluded_keywords,
+        get_high_impact_calendar_categories,
         get_high_impact_keywords,
         get_organization_label,
         is_organization_auto,
@@ -329,6 +330,7 @@ async def build_briefing(
         all_blocks,
         organization_label=organization_label or None,
         high_impact_keywords=get_high_impact_keywords(),
+        high_impact_categories=get_high_impact_calendar_categories(),
     )
     for e in entries:
         e.week_of = week_iso
