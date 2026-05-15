@@ -35,13 +35,25 @@ def default_impact_for_category(
     *,
     organization_label: str | None = None,
     extra_low_impact: Iterable[str] = (),
+    label: str | None = None,
+    high_impact_keywords: Iterable[str] = (),
 ) -> Impact:
     """Return the default :class:`Impact` for an entry with ``category``.
 
+    - If ``label`` contains any of ``high_impact_keywords`` (case-insensitive
+      substring match), the result is :attr:`Impact.HIGH` — this takes
+      precedence over the category-based default below.
     - ``Internal`` and ``Admin`` (case-insensitive) → :attr:`Impact.LOW`.
     - The user's organization label (e.g. ``"Microsoft"``) → :attr:`Impact.LOW`.
     - Anything else → :attr:`Impact.MEDIUM`.
     """
+    if label and high_impact_keywords:
+        haystack = label.lower()
+        for kw in high_impact_keywords:
+            if isinstance(kw, str):
+                needle = kw.strip().lower()
+                if needle and needle in haystack:
+                    return Impact.HIGH
     if not category:
         return Impact.MEDIUM
     cat_lower = category.strip().lower()
@@ -118,6 +130,7 @@ def aggregate_entries(
     internal_domains: set[str] | None = None,
     tz: tzinfo | None = None,
     organization_label: str | None = None,
+    high_impact_keywords: Iterable[str] = (),
 ) -> list[TimeEntry]:
     """Aggregate blocks into TimeEntry rows by (label, category).
 
@@ -128,6 +141,10 @@ def aggregate_entries(
     sign-in domain, e.g. ``"Microsoft"``). Categories matching it default
     to :attr:`Impact.LOW` alongside the built-in ``Internal``/``Admin``
     buckets.
+
+    ``high_impact_keywords`` is a list of user-defined substrings that, when
+    found (case-insensitive) in an entry's label or any constituent block
+    title, force the entry's default impact to :attr:`Impact.HIGH`.
     """
     if tz is None:
         tz = datetime.now().astimezone().tzinfo
@@ -135,6 +152,12 @@ def aggregate_entries(
     for b in blocks:
         key = categorize(b, keyword_map=keyword_map, internal_domains=internal_domains)
         bucket[key].append(b)
+
+    hi_kw_list = [
+        kw.strip().lower()
+        for kw in (high_impact_keywords or ())
+        if isinstance(kw, str) and kw.strip()
+    ]
 
     entries: list[TimeEntry] = []
     for (label, category), group in bucket.items():
@@ -146,13 +169,27 @@ def aggregate_entries(
         for b in group:
             day_iso = b.start.astimezone(tz).date().isoformat()
             daily[day_iso] += b.duration_hours
+        # Build the haystack used for keyword-based impact promotion: the
+        # entry's label plus every block title in the group. This catches
+        # cases where the keyword shows up in a constituent meeting title
+        # but didn't make it into the rolled-up label.
+        haystack_parts: list[str] = [label]
+        for b in group:
+            if b.title:
+                haystack_parts.append(b.title)
+        haystack = "\n".join(haystack_parts)
         entries.append(
             TimeEntry(
                 label=label,
                 category=category,
                 duration_hours=round(hours, 2),
                 confidence=conf,
-                impact=default_impact_for_category(category, organization_label=organization_label),
+                impact=default_impact_for_category(
+                    category,
+                    organization_label=organization_label,
+                    label=haystack,
+                    high_impact_keywords=hi_kw_list,
+                ),
                 source_block_ids=[b.id for b in group if b.id is not None],
                 daily_hours={k: round(v, 2) for k, v in daily.items()},
             )

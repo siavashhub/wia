@@ -80,3 +80,69 @@ def test_aggregate_assigns_default_impact():
     by_cat = {e.category: e.impact for e in entries}
     assert by_cat["Internal"] is Impact.LOW
     assert by_cat["Design"] is Impact.MEDIUM
+
+
+def test_default_impact_high_keyword_overrides_low():
+    # Keyword match on label promotes to HIGH even when the category would
+    # otherwise default to LOW (Internal / Admin / org).
+    assert (
+        default_impact_for_category(
+            "Internal",
+            label="Internal – Launch readiness",
+            high_impact_keywords=["launch"],
+        )
+        is Impact.HIGH
+    )
+    # Case-insensitive substring.
+    assert (
+        default_impact_for_category(
+            "Microsoft",
+            organization_label="Microsoft",
+            label="Microsoft – CEO briefing",
+            high_impact_keywords=["CEO"],
+        )
+        is Impact.HIGH
+    )
+    # No match → falls back to category default.
+    assert (
+        default_impact_for_category(
+            "Internal",
+            label="Internal – Standup",
+            high_impact_keywords=["launch"],
+        )
+        is Impact.LOW
+    )
+    # Empty keywords list is a no-op.
+    assert (
+        default_impact_for_category("Design", label="Design – Launch", high_impact_keywords=[])
+        is Impact.MEDIUM
+    )
+
+
+def test_aggregate_high_impact_keyword_promotes_entry():
+    blocks = [
+        _b("Standup"),  # Internal → LOW normally
+        _b("Project Atlas launch sync"),  # Internal → would be LOW, but matches keyword
+        _b("Design review"),  # Design → MEDIUM
+    ]
+    entries = aggregate_entries(
+        blocks,
+        organization_label="Microsoft",
+        high_impact_keywords=["launch"],
+    )
+    by_label = {e.label: e.impact for e in entries}
+    launch_entries = [imp for label, imp in by_label.items() if "launch" in label.lower()]
+    assert launch_entries and all(i is Impact.HIGH for i in launch_entries)
+    # Standup remains LOW.
+    standup_entries = [imp for label, imp in by_label.items() if "Standup" in label]
+    assert standup_entries and all(i is Impact.LOW for i in standup_entries)
+
+
+def test_aggregate_high_impact_keyword_matches_block_title():
+    # Keyword should match against constituent block titles even if the
+    # rolled-up label doesn't include it verbatim.
+    blocks = [
+        _b("CEO escalation", participants=["ceo@client-a.com"]),
+    ]
+    entries = aggregate_entries(blocks, high_impact_keywords=["ceo"])
+    assert entries[0].impact is Impact.HIGH

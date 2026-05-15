@@ -242,131 +242,208 @@
           </div>
         </div>
 
-        <!-- Excluded keywords ----------------------------------------------- -->
-        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">Exclude keywords:</span>
-          <div class="flex flex-wrap items-center gap-1">
-            <template x-for="kw in (prefs.excluded_keywords || [])" :key="'kw-' + kw">
-              <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                <span x-text="kw"></span>
+        <!-- Scan filters (collapsible) -------------------------------------- -->
+        <div class="mt-4 border-t pt-3 dark:border-slate-700"
+             x-data="{ filtersOpen: false, filtersTab: 'exclude' }">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              @click="filtersOpen = !filtersOpen"
+              :aria-expanded="filtersOpen ? 'true' : 'false'"
+              class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              <span x-html="icon(filtersOpen ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+              <span class="font-medium">Scan filters</span>
+            </button>
+            <!-- One-line summary when collapsed -->
+            <div x-show="!filtersOpen" x-cloak class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+              <span x-show="(prefs.excluded_keywords || []).length"
+                    x-text="prefs.excluded_keywords.length + ' excl. kw'"></span>
+              <span x-show="(prefs.excluded_calendar_categories || []).length"
+                    x-text="'· ' + prefs.excluded_calendar_categories.length + ' excl. cat'"></span>
+              <span x-show="(prefs.high_impact_keywords || []).length"
+                    x-text="'· ' + prefs.high_impact_keywords.length + ' high-impact'"></span>
+              <span x-show="prefs.exclude_private_meetings">· private excluded</span>
+              <span x-show="prefs.organization_label" x-text="'· org: ' + prefs.organization_label"></span>
+              <span x-show="!(prefs.excluded_keywords || []).length
+                          && !(prefs.excluded_calendar_categories || []).length
+                          && !(prefs.high_impact_keywords || []).length
+                          && !prefs.exclude_private_meetings
+                          && !prefs.organization_label"
+                    class="italic">No filters configured</span>
+            </div>
+          </div>
+
+          <div x-show="filtersOpen" x-cloak x-transition.opacity class="mt-3">
+            <!-- Tabs -->
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <div class="inline-flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800" role="tablist" aria-label="Scan filter tabs">
+                <button type="button" role="tab"
+                        @click="filtersTab = 'exclude'"
+                        :class="filtersTab === 'exclude' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                        class="inline-flex items-center gap-1 rounded-md px-3 py-1">
+                  <span x-html="icon('x-mark', 'h-3.5 w-3.5')"></span><span>Exclusions</span>
+                </button>
+                <button type="button" role="tab"
+                        @click="filtersTab = 'impact'"
+                        :class="filtersTab === 'impact' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                        class="inline-flex items-center gap-1 rounded-md px-3 py-1">
+                  <span x-html="icon('star', 'h-3.5 w-3.5')"></span><span>Impact</span>
+                </button>
+                <button type="button" role="tab"
+                        @click="filtersTab = 'org'"
+                        :class="filtersTab === 'org' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                        class="inline-flex items-center gap-1 rounded-md px-3 py-1">
+                  <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Organization</span>
+                </button>
+              </div>
+              <span class="text-[11px] text-slate-400 dark:text-slate-500">· applies to the next scan</span>
+            </div>
+
+            <!-- Exclusions tab -->
+            <div x-show="filtersTab === 'exclude'" class="space-y-3 text-xs">
+              <!-- Keywords -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">
+                  <span>Keywords</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="kw in (prefs.excluded_keywords || [])" :key="'kw-' + kw">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                      <span x-text="kw"></span>
+                      <button
+                        type="button"
+                        class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                        @click="removeExcludedKeyword(kw)"
+                        :aria-label="'Remove ' + kw"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newExcludedKeyword"
+                    @keydown.enter.prevent="addExcludedKeyword()"
+                    placeholder="Type &amp; press Enter…"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add excluded keyword"
+                  />
+                </div>
+              </div>
+
+              <!-- Calendar categories -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Calendar events tagged with these Outlook categories (case-insensitive) are skipped during the next scan.">
+                  <span>Calendar categories</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="cat in (prefs.excluded_calendar_categories || [])" :key="'cat-' + cat">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                      <span x-text="cat"></span>
+                      <button
+                        type="button"
+                        class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                        @click="removeExcludedCategory(cat)"
+                        :aria-label="'Remove ' + cat"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newExcludedCategory"
+                    @keydown.enter.prevent="addExcludedCategory()"
+                    placeholder="e.g. Personal"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add excluded calendar category"
+                  />
+                </div>
+              </div>
+
+              <!-- Private meetings -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Drop calendar events whose Outlook sensitivity is private, personal, or confidential.">
+                  <span>Private meetings</span>
+                </span>
                 <button
                   type="button"
-                  class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
-                  @click="removeExcludedKeyword(kw)"
-                  :aria-label="'Remove ' + kw"
-                  title="Remove"
-                >&times;</button>
-              </span>
-            </template>
-            <template x-if="!(prefs.excluded_keywords && prefs.excluded_keywords.length)">
-              <span class="text-slate-400 dark:text-slate-500">None</span>
-            </template>
+                  role="switch"
+                  :aria-checked="!!prefs.exclude_private_meetings"
+                  @click="toggleExcludePrivate(!prefs.exclude_private_meetings)"
+                  :class="prefs.exclude_private_meetings
+                    ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
+                  class="inline-flex items-center gap-1 rounded-md px-3 py-0.5 text-xs font-medium transition-colors"
+                >
+                  <span x-text="prefs.exclude_private_meetings ? 'Excluded' : 'Included'"></span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Impact tab -->
+            <div x-show="filtersTab === 'impact'" x-cloak class="space-y-3 text-xs">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose title or rolled-up label contains any of these substrings (case-insensitive) are marked High impact.">
+                  <span>High-impact keywords</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="kw in (prefs.high_impact_keywords || [])" :key="'hikw-' + kw">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                      <span x-text="kw"></span>
+                      <button
+                        type="button"
+                        class="text-amber-700 hover:text-red-600 dark:text-amber-200 dark:hover:text-red-400"
+                        @click="removeHighImpactKeyword(kw)"
+                        :aria-label="'Remove ' + kw"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newHighImpactKeyword"
+                    @keydown.enter.prevent="addHighImpactKeyword()"
+                    placeholder="e.g. launch"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add high-impact keyword"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Organization tab -->
+            <div x-show="filtersTab === 'org'" x-cloak class="space-y-2 text-xs">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-40 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review.">
+                  <span>Your organization</span>
+                </span>
+                <form class="inline-flex items-center gap-1" @submit.prevent="saveOrganization()">
+                  <input
+                    type="text"
+                    x-model="organizationDraft"
+                    placeholder="e.g. Microsoft"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Organization label"
+                  />
+                  <button
+                    type="submit"
+                    :disabled="organizationDraft === (prefs.organization_label || '')"
+                    class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
+                  >Save</button>
+                </form>
+              </div>
+              <template x-if="prefs.organization_label_auto && prefs.organization_label">
+                <p class="pl-[10.5rem] text-[11px] text-slate-400 dark:text-slate-500">Auto-detected from your sign-in domain.</p>
+              </template>
+              <template x-if="!prefs.organization_label">
+                <p class="pl-[10.5rem] text-[11px] text-slate-400 dark:text-slate-500">Will be auto-detected after the next scan.</p>
+              </template>
+            </div>
           </div>
-          <form class="inline-flex items-center gap-1" @submit.prevent="addExcludedKeyword()">
-            <input
-              type="text"
-              x-model="newExcludedKeyword"
-              placeholder="Type keyword..."
-              maxlength="100"
-              class="w-40 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-              :aria-label="'Add excluded keyword'"
-            />
-            <button
-              type="submit"
-              :disabled="!newExcludedKeyword || !newExcludedKeyword.trim()"
-              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
-            >Add</button>
-          </form>
-          <span x-show="(prefs.excluded_keywords || []).length" class="text-slate-400 dark:text-slate-500">
-            · applies to the next scan
-          </span>
-        </div>
-
-        <!-- Excluded calendar categories ------------------------------------ -->
-        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-500 dark:text-slate-400" title="Calendar events tagged with these Outlook categories (case-insensitive) are skipped during the next scan.">Exclude calendar categories:</span>
-          <div class="flex flex-wrap items-center gap-1">
-            <template x-for="cat in (prefs.excluded_calendar_categories || [])" :key="'cat-' + cat">
-              <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                <span x-text="cat"></span>
-                <button
-                  type="button"
-                  class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
-                  @click="removeExcludedCategory(cat)"
-                  :aria-label="'Remove ' + cat"
-                  title="Remove"
-                >&times;</button>
-              </span>
-            </template>
-            <template x-if="!(prefs.excluded_calendar_categories && prefs.excluded_calendar_categories.length)">
-              <span class="text-slate-400 dark:text-slate-500">None</span>
-            </template>
-          </div>
-          <form class="inline-flex items-center gap-1" @submit.prevent="addExcludedCategory()">
-            <input
-              type="text"
-              x-model="newExcludedCategory"
-              placeholder="e.g. Personal"
-              maxlength="100"
-              class="w-40 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-              :aria-label="'Add excluded calendar category'"
-            />
-            <button
-              type="submit"
-              :disabled="!newExcludedCategory || !newExcludedCategory.trim()"
-              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
-            >Add</button>
-          </form>
-          <span x-show="(prefs.excluded_calendar_categories || []).length" class="text-slate-400 dark:text-slate-500">
-            · applies to the next scan
-          </span>
-        </div>
-
-        <!-- Exclude private meetings ---------------------------------------- -->
-        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-500 dark:text-slate-400" title="Drop calendar events whose Outlook sensitivity is private, personal, or confidential.">Private meetings:</span>
-          <button
-            type="button"
-            role="switch"
-            :aria-checked="!!prefs.exclude_private_meetings"
-            @click="toggleExcludePrivate(!prefs.exclude_private_meetings)"
-            :class="prefs.exclude_private_meetings
-              ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
-              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
-            class="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
-          >
-            <span x-text="prefs.exclude_private_meetings ? 'Excluded' : 'Included'"></span>
-          </button>
-          <span class="text-slate-400 dark:text-slate-500">· applies to the next scan</span>
-        </div>
-
-        <!-- Organization label ---------------------------------------------- -->
-        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span
-            class="text-slate-500 dark:text-slate-400"
-            title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review."
-          >Your organization:</span>
-          <form class="inline-flex items-center gap-1" @submit.prevent="saveOrganization()">
-            <input
-              type="text"
-              x-model="organizationDraft"
-              :placeholder="'e.g. Microsoft'"
-              maxlength="100"
-              class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-              :aria-label="'Organization label'"
-            />
-            <button
-              type="submit"
-              :disabled="organizationDraft === (prefs.organization_label || '')"
-              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
-            >Save</button>
-          </form>
-          <template x-if="prefs.organization_label_auto && prefs.organization_label">
-            <span class="text-slate-400 dark:text-slate-500">· auto-detected from your sign-in domain</span>
-          </template>
-          <template x-if="!prefs.organization_label">
-            <span class="text-slate-400 dark:text-slate-500">· will be auto-detected after the next scan</span>
-          </template>
         </div>
         <div x-show="isScanningCurrent()" x-cloak class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
           <span class="font-medium text-indigo-600 dark:text-indigo-400">Scanning:</span>

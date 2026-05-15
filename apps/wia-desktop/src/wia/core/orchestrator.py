@@ -207,6 +207,7 @@ async def build_briefing(
         get_exclude_private_meetings,
         get_excluded_calendar_categories,
         get_excluded_keywords,
+        get_high_impact_keywords,
         get_organization_label,
         is_organization_auto,
         set_organization_label,
@@ -324,7 +325,11 @@ async def build_briefing(
             organization_label = derived
 
     # 3. Categorize → entries
-    entries = aggregate_entries(all_blocks, organization_label=organization_label or None)
+    entries = aggregate_entries(
+        all_blocks,
+        organization_label=organization_label or None,
+        high_impact_keywords=get_high_impact_keywords(),
+    )
     for e in entries:
         e.week_of = week_iso
 

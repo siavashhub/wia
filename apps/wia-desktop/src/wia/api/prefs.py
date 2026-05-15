@@ -18,6 +18,7 @@ PREF_THEME = "theme"
 PREF_SIGNALS = "enabled_signals"
 PREF_EXCLUDED_KEYWORDS = "excluded_keywords"
 PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
+PREF_HIGH_IMPACT_KEYWORDS = "high_impact_keywords"
 PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
 PREF_ORGANIZATION = "organization_label"
 PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
@@ -33,6 +34,8 @@ MAX_EXCLUDED_KEYWORDS = 100
 MAX_KEYWORD_LENGTH = 100
 MAX_EXCLUDED_CATEGORIES = 100
 MAX_CATEGORY_LENGTH = 100
+MAX_HIGH_IMPACT_KEYWORDS = 100
+MAX_HIGH_IMPACT_KEYWORD_LENGTH = 100
 MAX_ORGANIZATION_LENGTH = 100
 
 
@@ -181,6 +184,68 @@ def get_excluded_calendar_categories() -> list[str]:
     return _read_excluded_categories()
 
 
+def _read_high_impact_keywords() -> list[str]:
+    raw = prefs_store.get_pref(PREF_HIGH_IMPACT_KEYWORDS)
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for kw in parsed:
+        if not isinstance(kw, str):
+            continue
+        cleaned = kw.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _normalize_high_impact_keywords(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            raise HTTPException(status_code=400, detail="high_impact_keywords must all be strings")
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_HIGH_IMPACT_KEYWORD_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"high-impact keyword exceeds {MAX_HIGH_IMPACT_KEYWORD_LENGTH} "
+                    f"chars: {cleaned[:32]!r}…"
+                ),
+            )
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    if len(out) > MAX_HIGH_IMPACT_KEYWORDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"at most {MAX_HIGH_IMPACT_KEYWORDS} high-impact keywords allowed",
+        )
+    return out
+
+
+def get_high_impact_keywords() -> list[str]:
+    """Public helper used by the orchestrator to promote matching entries to
+    high impact during briefing aggregation."""
+    return _read_high_impact_keywords()
+
+
 def get_exclude_private_meetings() -> bool:
     """Public helper: should calendar blocks marked private/personal/
     confidential be dropped before grouping?"""
@@ -252,6 +317,7 @@ class Prefs(BaseModel):
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
     excluded_keywords: list[str] = Field(default_factory=list)
     excluded_calendar_categories: list[str] = Field(default_factory=list)
+    high_impact_keywords: list[str] = Field(default_factory=list)
     exclude_private_meetings: bool = False
     organization_label: str = ""
     organization_label_auto: bool = False
@@ -264,6 +330,7 @@ class PrefsUpdate(BaseModel):
     enabled_signals: list[str] | None = None
     excluded_keywords: list[str] | None = None
     excluded_calendar_categories: list[str] | None = None
+    high_impact_keywords: list[str] | None = None
     exclude_private_meetings: bool | None = None
     organization_label: str | None = None
 
@@ -276,6 +343,7 @@ async def get_prefs() -> Prefs:
         enabled_signals=_read_signals(),
         excluded_keywords=_read_excluded_keywords(),
         excluded_calendar_categories=_read_excluded_categories(),
+        high_impact_keywords=_read_high_impact_keywords(),
         exclude_private_meetings=_read_exclude_private(),
         organization_label=get_organization_label(),
         organization_label_auto=is_organization_auto(),
@@ -309,6 +377,9 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
     if update.excluded_calendar_categories is not None:
         cleaned_cats = _normalize_categories(update.excluded_calendar_categories)
         prefs_store.set_pref(PREF_EXCLUDED_CATEGORIES, json.dumps(cleaned_cats))
+    if update.high_impact_keywords is not None:
+        cleaned_hi = _normalize_high_impact_keywords(update.high_impact_keywords)
+        prefs_store.set_pref(PREF_HIGH_IMPACT_KEYWORDS, json.dumps(cleaned_hi))
     if update.exclude_private_meetings is not None:
         prefs_store.set_pref(
             PREF_EXCLUDE_PRIVATE, "true" if update.exclude_private_meetings else "false"

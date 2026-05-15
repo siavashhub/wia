@@ -34,7 +34,7 @@ function wia() {
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
     minWeekOffset: -52, // allow up to 1 year of history
-    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], exclude_private_meetings: false, organization_label: '', organization_label_auto: false },
+    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], high_impact_keywords: [], exclude_private_meetings: false, organization_label: '', organization_label_auto: false },
     availableSignals: [
       { key: 'calendar', label: 'Calendar', icon: 'calendar-days' },
       { key: 'teams', label: 'Teams', icon: 'chat-bubble-left-right' },
@@ -42,6 +42,7 @@ function wia() {
     ],
     newExcludedKeyword: '',
     newExcludedCategory: '',
+    newHighImpactKeyword: '',
     organizationDraft: '',
     // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
     // via x-html so the icon inherits currentColor like Tailwind text.
@@ -259,6 +260,38 @@ function wia() {
       const next = (this.prefs.excluded_calendar_categories || []).filter((k) => k !== cat);
       this.prefs.excluded_calendar_categories = next;
       await this._saveExcludedCategories(next);
+    },
+
+    async _saveHighImpactKeywords(next) {
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ high_impact_keywords: next }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save high-impact keywords failed: ${e}`; }
+    },
+
+    async addHighImpactKeyword() {
+      const raw = (this.newHighImpactKeyword || '').trim();
+      if (!raw) return;
+      const existing = (this.prefs.high_impact_keywords || []).map((k) => k.toLowerCase());
+      if (existing.includes(raw.toLowerCase())) {
+        this.newHighImpactKeyword = '';
+        return;
+      }
+      const next = [...(this.prefs.high_impact_keywords || []), raw];
+      this.prefs.high_impact_keywords = next;
+      this.newHighImpactKeyword = '';
+      await this._saveHighImpactKeywords(next);
+    },
+
+    async removeHighImpactKeyword(kw) {
+      const next = (this.prefs.high_impact_keywords || []).filter((k) => k !== kw);
+      this.prefs.high_impact_keywords = next;
+      await this._saveHighImpactKeywords(next);
     },
 
     async toggleExcludePrivate(on) {
