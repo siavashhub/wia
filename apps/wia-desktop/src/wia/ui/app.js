@@ -34,7 +34,7 @@ function wia() {
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
     minWeekOffset: -52, // allow up to 1 year of history
-    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], excluded_calendar_categories: [], high_impact_keywords: [], exclude_private_meetings: false, organization_label: '', organization_label_auto: false },
+    prefs: { theme: 'system', enabled_signals: ['calendar'], excluded_keywords: [], week_starts_on: 'sun', excluded_calendar_categories: [], high_impact_keywords: [], exclude_private_meetings: false, organization_label: '', organization_label_auto: false },
     availableSignals: [
       { key: 'calendar', label: 'Calendar', icon: 'calendar-days' },
       { key: 'teams', label: 'Teams', icon: 'chat-bubble-left-right' },
@@ -74,7 +74,10 @@ function wia() {
     prefsTab: 'exclude', // 'exclude' | 'impact' | 'org'
     appVersion: '',
     expanded: {}, // { [category]: boolean }
-    dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    // Column index → label. Backend always treats Monday as week_of, so the
+    // ordering here is purely a render-time preference.
+    _dayLabelsMon: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    _dayLabelsSun: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     _systemThemeMql: null,
 
     // ---- Review state ----------------------------------------------------
@@ -186,6 +189,22 @@ function wia() {
           body: JSON.stringify({ theme }),
         });
       } catch (e) { this.error = `Save theme failed: ${e}`; }
+    },
+
+    async setWeekStartsOn(value) {
+      // UI-only preference: backend ``week_of`` stays Monday-anchored, only
+      // the rendered column order changes.
+      if (value !== 'mon' && value !== 'sun') return;
+      this.prefs.week_starts_on = value;
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ week_starts_on: value }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save week start failed: ${e}`; }
     },
 
     async toggleSignal(key, on) {
@@ -445,7 +464,7 @@ function wia() {
       const monday = this.briefing?.week_start
         ? new Date(this.briefing.week_start + 'T00:00:00')
         : this.weekStartFor(this.weekOffset);
-      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + this.dayOffset(i));
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     },
 
@@ -453,11 +472,27 @@ function wia() {
       const monday = this.briefing?.week_start
         ? new Date(this.briefing.week_start + 'T00:00:00')
         : this.weekStartFor(this.weekOffset);
-      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + this.dayOffset(i));
       const y = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, '0');
       const dd = String(d.getDate()).padStart(2, '0');
       return `${y}-${mm}-${dd}`;
+    },
+
+    // Map a column index (0..6) to days-from-Monday (0..6). When the user
+    // prefers Sunday-start, column 0 is Sunday (= Monday + 6 days), columns
+    // 1..6 are Mon..Sat. Otherwise it's just the identity.
+    dayOffset(i) {
+      if (this.prefs.week_starts_on === 'sun') {
+        return i === 0 ? 6 : i - 1;
+      }
+      return i;
+    },
+
+    // Column index → 3-letter weekday label, honouring week_starts_on.
+    dayLabel(i) {
+      const labels = this.prefs.week_starts_on === 'sun' ? this._dayLabelsSun : this._dayLabelsMon;
+      return labels[i];
     },
 
     canGoBack() { return this.weekOffset > this.minWeekOffset; },
