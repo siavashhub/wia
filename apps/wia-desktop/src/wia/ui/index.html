@@ -1175,7 +1175,8 @@
         x-transition:leave-end="translate-x-full"
         class="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl dark:bg-slate-900"
       >
-        <header class="flex items-center justify-between border-b px-5 py-3 dark:border-slate-700">
+        <!-- <header class="flex items-center justify-between border-b px-4 py-3 dark:border-slate-700"> -->
+        <header class="flex items-center justify-between px-4 py-3">
           <h2 id="prefs-panel-title" class="inline-flex items-center gap-2 text-base font-semibold">
             <span x-html="icon('cog-6-tooth', 'h-4 w-4')"></span>
             <span>Preferences</span>
@@ -1193,15 +1194,15 @@
           <!-- App section: preferences not tied to scans. Lives at the top
                so its content renders directly beneath its own header instead
                of being implied by a faraway tab row. -->
-          <div class="flex items-center gap-3 px-5 pt-4">
+          <div class="flex items-center gap-3 px-4 pt-4">
             <span class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">App</span>
             <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
           </div>
-          <section class="px-5 py-4">
+          <section class="px-4 py-4">
             <!-- Appearance -->
             <div class="space-y-3 text-xs">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="inline-flex w-40 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Pick a theme. Auto follows the operating system.">
+                <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Pick a theme. Auto follows the operating system.">
                   <span>Theme</span>
                 </span>
                 <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
@@ -1214,56 +1215,80 @@
           </section>
 
           <!-- Scan section: tabs sit right next to their own header and content. -->
-          <div class="flex items-center gap-3 px-5">
+          <!-- <div class="flex items-center gap-3 px-4">
             <span class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Scan</span>
             <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
-          </div>
-          <section class="px-5 py-4">
-            <header class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+          </div> -->
+          <section class="px-4 py-4">
+            <header class="mb-3 flex items-center gap-3">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Scan</span>
+              <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Applies to the next scan</p>
+            </header>
+
+            <!-- <header class="mb-1 flex items-center gap-3">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Scan</span>
+              <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+            </header>
+            <p class="mb-3 text-[11px] text-slate-400 dark:text-slate-500">Applies to the next scan.</p>             -->
+
+            <!-- Filters row: structured identically to the Theme row above
+                 (label width w-28, gap-2, gap-1 inside the tab group, px-2
+                 py-1 buttons) so the tab group's left edge aligns vertically
+                 with Theme's, and all four labeled tabs fit on one line
+                 within the standard max-w-lg slide-over. -->
+            <div class="mb-1 flex items-center gap-2 text-xs">
+              <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Choose which aspect of the next scan to configure.">
+                <span>Filters</span>
+              </span>
               <div
-                class="inline-flex flex-wrap items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                class="inline-flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
                 role="tablist"
                 aria-label="Scan preferences tabs"
               >
                 <button
                   type="button"
                   role="tab"
+                  :aria-selected="prefsTab === 'signals'"
                   @click="prefsTab = 'signals'"
                   :class="prefsTab === 'signals' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-                  class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
                 >
                   <span x-html="icon('magnifying-glass', 'h-3.5 w-3.5')"></span><span>Signals</span>
                 </button>
                 <button
                   type="button"
                   role="tab"
+                  :aria-selected="prefsTab === 'exclude'"
                   @click="prefsTab = 'exclude'"
                   :class="prefsTab === 'exclude' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-                  class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
                 >
                   <span x-html="icon('x-mark', 'h-3.5 w-3.5')"></span><span>Exclusions</span>
                 </button>
                 <button
                   type="button"
                   role="tab"
+                  :aria-selected="prefsTab === 'impact'"
                   @click="prefsTab = 'impact'"
                   :class="prefsTab === 'impact' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-                  class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
                 >
                   <span x-html="icon('star', 'h-3.5 w-3.5')"></span><span>Impact</span>
                 </button>
                 <button
                   type="button"
                   role="tab"
+                  :aria-selected="prefsTab === 'org'"
                   @click="prefsTab = 'org'"
                   :class="prefsTab === 'org' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-                  class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
                 >
                   <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Organization</span>
                 </button>
               </div>
-              <p class="basis-full text-[11px] text-slate-400 dark:text-slate-500">Applies to the next scan.</p>
-            </header>
+            </div>
+            <div class="h-4"></div>
 
           <!-- Signals tab -->
           <div x-show="prefsTab === 'signals'" class="space-y-3 text-xs">
@@ -1271,7 +1296,8 @@
               Pick which Work IQ signals WIA pulls on the next scan. You can
               also toggle these inline next to the Scan button in Briefing.
             </p>
-            <div class="flex flex-wrap gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Signals to scan">
+            <div class="flex justify-center">
+              <div class="inline-flex flex-wrap items-center justify-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Signals to scan">
               <template x-for="sig in availableSignals" :key="'pref-' + sig.key">
                 <button
                   type="button"
@@ -1281,20 +1307,26 @@
                   :class="(prefs.enabled_signals || []).includes(sig.key)
                     ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700'
                     : 'text-slate-600 opacity-70 hover:opacity-100 dark:text-slate-300'"
-                  class="inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors"
                 >
                   <span x-html="icon(sig.icon, 'h-3.5 w-3.5')"></span>
                   <span x-text="sig.label"></span>
                 </button>
               </template>
+              </div>
             </div>
           </div>
 
           <!-- Exclusions tab -->
           <div x-show="prefsTab === 'exclude'" x-cloak class="space-y-4 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Block specific meetings from appearing in Briefing. These filters
+              are applied during the next scan, so changes here won't affect
+              existing Briefing entries until then.
+            </p>
             <!-- Keywords -->
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">
                 <span>Keywords</span>
               </span>
               <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
@@ -1314,7 +1346,7 @@
                   type="text"
                   x-model="newExcludedKeyword"
                   @keydown.enter.prevent="addExcludedKeyword()"
-                  placeholder="Type &amp; press Enter…"
+                  placeholder="e.g. Community Call"
                   maxlength="100"
                   class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
                   aria-label="Add excluded keyword"
@@ -1324,7 +1356,7 @@
 
             <!-- Calendar categories -->
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Calendar events tagged with these Outlook categories (case-insensitive) are skipped during the next scan.">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Calendar events tagged with these Outlook categories (case-insensitive) are skipped during the next scan.">
                 <span>Calendar categories</span>
               </span>
               <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
@@ -1354,7 +1386,7 @@
 
             <!-- Private meetings -->
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Drop calendar events whose Outlook sensitivity is private, personal, or confidential.">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Drop calendar events whose Outlook sensitivity is private, personal, or confidential.">
                 <span>Private meetings</span>
               </span>
               <button
@@ -1374,8 +1406,16 @@
 
           <!-- Impact tab -->
           <div x-show="prefsTab === 'impact'" x-cloak class="space-y-3 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Mark entries as High impact based on keywords in their title or
+              rolled-up label or their categories. This is meant to help you quickly identify likely
+              important meetings in Briefing and Review, but use it with care —
+              it can produce false positives and negatives, so we recommend
+              starting with a few obvious keywords and adjusting over time as
+              you see how it affects your Briefing.
+            </p>
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex w-40 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose title or rolled-up label contains any of these substrings (case-insensitive) are marked High impact.">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose title or rolled-up label contains any of these substrings (case-insensitive) are marked High impact.">
                 <span>High-impact keywords</span>
               </span>
               <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
@@ -1406,8 +1446,11 @@
 
           <!-- Organization tab -->
           <div x-show="prefsTab === 'org'" x-cloak class="space-y-2 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Enter the name of your organization to help with grouping and labeling in WIA Briefing and Review.
+            </p>
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex w-40 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review.">
+              <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review.">
                 <span>Your organization</span>
               </span>
               <form class="inline-flex items-center gap-1" @submit.prevent="saveOrganization()">
@@ -1427,10 +1470,10 @@
               </form>
             </div>
             <template x-if="prefs.organization_label_auto && prefs.organization_label">
-              <p class="pl-[10.5rem] text-[11px] text-slate-400 dark:text-slate-500">Auto-detected from your sign-in domain.</p>
+              <p class="pl-[7.5rem] text-[11px] text-slate-400 dark:text-slate-500">Auto-detected from your sign-in domain.</p>
             </template>
             <template x-if="!prefs.organization_label">
-              <p class="pl-[10.5rem] text-[11px] text-slate-400 dark:text-slate-500">Will be auto-detected after the next scan.</p>
+              <p class="pl-[7.5rem] text-[11px] text-slate-400 dark:text-slate-500">Will be auto-detected after the next scan.</p>
             </template>
           </div>
           </section>

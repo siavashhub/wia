@@ -86,6 +86,17 @@ uv run ruff check .             # lint
 uv run ruff format .            # format
 ```
 
+To enable DevTools -> PowerShell (per-session):
+```powershell
+$env:WIA_DEBUG = "1"; uv run wia-desktop
+```
+to disable:
+```powershell
+Remove-Item Env:WIA_DEBUG; uv run wia-desktop
+```
+
+
+
 CI runs on `windows-latest` against Python **3.12**. Don't introduce changes that only pass on Linux/macOS.
 
 ### Expose WIA to Copilot Chat
