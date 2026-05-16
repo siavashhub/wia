@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from wia.api import briefing, entries, export, health, prefs, review, schedule, workiq
 from wia.config import get_settings
 from wia.core.scheduler import get_scheduler
+from wia.logging_setup import configure_logging
 from wia.storage.db import init_db
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def _render_index() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    configure_logging(settings)
     log.info("WIA starting; data dir = %s", settings.data_dir)
     init_db()
     sched = get_scheduler()

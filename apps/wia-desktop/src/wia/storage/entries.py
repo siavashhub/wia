@@ -32,6 +32,9 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
         week_of=row.week_of,
         source_block_ids=[int(x) for x in row.source_block_ids.split(",") if x],
         daily_hours=daily,
+        notes=row.notes or "",
+        manual=bool(row.manual),
+        sources=[s for s in (row.sources or "").split(",") if s],
     )
 
 
@@ -47,6 +50,9 @@ def _entry_to_row(entry: TimeEntry, *, user_edited: bool = False) -> TimeEntryRo
         user_edited=user_edited,
         daily_hours=json.dumps(entry.daily_hours or {}),
         impact=entry.impact.value,
+        notes=entry.notes or "",
+        manual=bool(entry.manual),
+        sources=",".join(entry.sources or []),
     )
 
 
@@ -80,6 +86,9 @@ def list_entries_in_range(start_iso: str, end_iso: str) -> list[TimeEntry]:
 
 def create_entry(entry: TimeEntry) -> TimeEntry:
     with get_session() as session:
+        # Entries created through this path come from the UI's manual-add
+        # flow — flag them so a subsequent rescan won't overwrite them.
+        entry.manual = True
         row = _entry_to_row(entry, user_edited=True)
         row.id = None
         session.add(row)
@@ -95,7 +104,15 @@ def update_entry(entry_id: int, update: TimeEntryUpdate) -> TimeEntry | None:
             return None
         data = update.model_dump(exclude_unset=True)
         for key, val in data.items():
-            setattr(row, key, val)
+            if key == "impact" and val is not None:
+                # Pydantic dump leaves enums as enum instances by default.
+                setattr(row, key, val.value if hasattr(val, "value") else str(val))
+            elif key == "daily_hours":
+                row.daily_hours = json.dumps(val or {})
+                if val:
+                    row.duration_hours = round(sum(float(v) for v in val.values()), 4)
+            else:
+                setattr(row, key, val)
         row.user_edited = True
         session.add(row)
         session.commit()
@@ -125,7 +142,7 @@ def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
         existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
         kept_keys: set[tuple[str, str | None]] = set()
         for row in existing:
-            if row.user_edited:
+            if row.user_edited or row.manual:
                 kept_keys.add((row.label, row.category))
             else:
                 session.delete(row)
@@ -189,7 +206,7 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
         edited_keys: set[tuple[str, str | None]] = set()
         edited_block_ids: set[int] = set()
         for row in existing:
-            if row.user_edited:
+            if row.user_edited or row.manual:
                 edited_keys.add((row.label, row.category))
                 edited_block_ids.update(_row_block_ids(row))
             else:
@@ -242,6 +259,11 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
                 # subset.
                 merged_ids = sorted(_row_block_ids(target) | entry_block_ids)
                 target.source_block_ids = ",".join(str(i) for i in merged_ids)
+                # Union signal-source tags too — provenance is sticky.
+                merged_sources = sorted(
+                    {s for s in (target.sources or "").split(",") if s} | set(entry.sources or [])
+                )
+                target.sources = ",".join(merged_sources)
                 target.daily_hours = json.dumps(entry.daily_hours or {})
                 session.add(target)
                 # Refresh indexes so a later incoming entry doesn't also

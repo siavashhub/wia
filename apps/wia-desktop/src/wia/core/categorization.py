@@ -279,6 +279,7 @@ def aggregate_entries(
                 impact=impact,
                 source_block_ids=[b.id for b in group if b.id is not None],
                 daily_hours={k: round(v, 2) for k, v in daily.items()},
+                sources=sorted({b.source.value for b in group}),
             )
         )
 

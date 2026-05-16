@@ -356,6 +356,15 @@
             <button @click="expandAll()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400" x-text="allExpanded() ? 'Collapse all' : 'Expand all'"></button>
           </div>
           <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              @click="openManualForm()"
+              :disabled="manualFormOpen"
+              class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              title="Add a manual entry for work not picked up by the scan"
+            >
+              <span x-html="icon('plus', 'h-4 w-4')"></span><span>Add manual entry</span>
+            </button>
             <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Week starts on" title="Choose the first day of the week">
               <button type="button" @click="setWeekStartsOn('sun')" :class="prefs.week_starts_on === 'sun' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Sunday"><span>Sun</span></button>
               <button type="button" @click="setWeekStartsOn('mon')" :class="prefs.week_starts_on === 'mon' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Monday"><span>Mon</span></button>
@@ -394,77 +403,136 @@
             <tbody :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
               <template x-for="group in groupedEntries()" :key="group.category">
                 <template x-for="row in groupRows(group)" :key="row.key">
-                  <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : '')">
+                  <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : (row.kind === 'notes' ? 'bg-slate-50/60 dark:bg-slate-800/30' : ''))">
+                    <!-- Notes row: spans the whole width with a textarea. -->
+                    <template x-if="row.kind === 'notes'">
+                      <td :colspan="14" class="px-3 pb-3 pt-1">
+                        <label class="block text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">Notes</label>
+                        <textarea
+                          x-model="row.entry.notes"
+                          @blur="saveNotes(row.entry)"
+                          rows="2"
+                          placeholder="Context for this entry — what you actually did, outcomes, follow-ups. Surfaces in Review."
+                          class="mt-1 w-full resize-y rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900"
+                        ></textarea>
+                      </td>
+                    </template>
                     <!-- Chevron column -->
-                    <td class="text-center align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <button @click="toggleGroup(group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[group.category] ? 'Collapse ' : 'Expand ') + group.category">
-                          <span x-html="icon(expanded[group.category] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
-                        </button>
-                      </template>
-                    </td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="text-center align-middle">
+                        <template x-if="row.kind === 'group'">
+                          <button @click="toggleGroup(group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[group.category] ? 'Collapse ' : 'Expand ') + group.category">
+                            <span x-html="icon(expanded[group.category] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+                          </button>
+                        </template>
+                      </td>
+                    </template>
                     <!-- Category -->
-                    <td class="py-2 pr-3 align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <span x-text="group.category"></span>
-                      </template>
-                      <template x-if="row.kind === 'sub'">
-                        <span></span>
-                      </template>
-                    </td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="py-2 pr-3 align-middle">
+                        <template x-if="row.kind === 'group'">
+                          <span x-text="group.category"></span>
+                        </template>
+                        <template x-if="row.kind === 'sub'">
+                          <span></span>
+                        </template>
+                      </td>
+                    </template>
                     <!-- Label -->
-                    <td class="pr-3 align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <span class="text-xs text-slate-500 dark:text-slate-400" x-text="group.entries.length + (group.entries.length === 1 ? ' item' : ' items')"></span>
-                      </template>
-                      <template x-if="row.kind === 'sub'">
-                        <input class="w-full bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
-                      </template>
-                    </td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="pr-3 align-middle">
+                        <template x-if="row.kind === 'group'">
+                          <span class="text-xs text-slate-500 dark:text-slate-400" x-text="group.entries.length + (group.entries.length === 1 ? ' item' : ' items')"></span>
+                        </template>
+                        <template x-if="row.kind === 'sub'">
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <input class="min-w-[12rem] flex-1 bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
+                            <template x-if="row.entry.manual">
+                              <span title="Manual entry — added by you" class="inline-flex items-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">manual</span>
+                            </template>
+                            <template x-for="src in (row.entry.sources || [])" :key="'src-' + row.entry.id + '-' + src">
+                              <span
+                                :class="sourceBadgeClass(src)"
+                                :title="sourceBadgeTitle(src)"
+                                class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                              >
+                                <span x-html="icon(sourceBadgeIcon(src), 'h-3 w-3')"></span>
+                                <span x-text="sourceBadgeLabel(src)"></span>
+                              </span>
+                            </template>
+                            <template x-if="(row.entry.notes || '').trim()">
+                              <span title="Has notes" class="text-amber-500" x-html="icon('chat-bubble-left-right', 'h-3.5 w-3.5')"></span>
+                            </template>
+                          </div>
+                        </template>
+                      </td>
+                    </template>
                     <!-- Day cells -->
-                    <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
-                      <td class="px-2 text-right tabular-nums" x-text="row.kind === 'group' ? hhmm(group.daily[dayIso(i)] || 0) : hoursForDay(row.entry, i)"></td>
+                    <template x-if="row.kind !== 'notes'">
+                      <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
+                        <td class="px-2 text-right tabular-nums" x-text="row.kind === 'group' ? hhmm(group.daily[dayIso(i)] || 0) : hoursForDay(row.entry, i)"></td>
+                      </template>
                     </template>
                     <!-- Total -->
-                    <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(group.total) : hhmm(row.entry.duration_hours)"></td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(group.total) : hhmm(row.entry.duration_hours)"></td>
+                    </template>
                     <!-- Confidence -->
-                    <td class="px-3 text-center">
-                      <template x-if="row.kind === 'sub'">
-                        <span class="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800" x-text="row.entry.confidence"></span>
-                      </template>
-                    </td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="px-3 text-center">
+                        <template x-if="row.kind === 'sub'">
+                          <span class="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800" x-text="row.entry.confidence"></span>
+                        </template>
+                      </td>
+                    </template>
                     <!-- Impact -->
-                    <td class="px-3 text-center">
-                      <template x-if="row.kind === 'group'">
-                        <span class="text-[11px] text-slate-500 dark:text-slate-400" x-text="groupImpactSummary(group)"></span>
-                      </template>
-                      <template x-if="row.kind === 'sub'">
-                        <div
-                          class="inline-flex overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600"
-                          role="group"
-                          :aria-label="'Impact for ' + (row.entry.label || 'entry')"
-                        >
-                          <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="opt.v">
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="px-3 text-center">
+                        <template x-if="row.kind === 'group'">
+                          <span class="text-[11px] text-slate-500 dark:text-slate-400" x-text="groupImpactSummary(group)"></span>
+                        </template>
+                        <template x-if="row.kind === 'sub'">
+                          <div
+                            class="inline-flex overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600"
+                            role="group"
+                            :aria-label="'Impact for ' + (row.entry.label || 'entry')"
+                          >
+                            <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="opt.v">
+                              <button
+                                type="button"
+                                @click="setImpact(row.entry, opt.v)"
+                                :class="impactSegmentClass(opt.v, row.entry.impact)"
+                                :aria-pressed="(row.entry.impact || 'medium') === opt.v"
+                                :title="opt.l + ' impact'"
+                                class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
+                              >
+                                <span x-text="opt.l"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                      </td>
+                    </template>
+                    <!-- Actions (notes toggle + delete) -->
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="text-center">
+                        <template x-if="row.kind === 'sub'">
+                          <div class="inline-flex items-center gap-1">
                             <button
                               type="button"
-                              @click="setImpact(row.entry, opt.v)"
-                              :class="impactSegmentClass(opt.v, row.entry.impact)"
-                              :aria-pressed="(row.entry.impact || 'medium') === opt.v"
-                              :title="opt.l + ' impact'"
-                              class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
+                              @click="toggleNotes(row.entry)"
+                              :class="(row.entry.notes || '').trim() || notesOpen[row.entry.id] ? 'text-amber-600 hover:text-amber-700' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                              :aria-pressed="!!notesOpen[row.entry.id]"
+                              :aria-label="'Toggle notes for ' + (row.entry.label || 'entry')"
+                              :title="(row.entry.notes || '').trim() ? 'Edit notes' : 'Add notes'"
                             >
-                              <span x-text="opt.l"></span>
+                              <span x-html="icon('pencil-square', 'h-4 w-4')"></span>
                             </button>
-                          </template>
-                        </div>
-                      </template>
-                    </td>
-                    <!-- Delete -->
-                    <td class="text-center">
-                      <template x-if="row.kind === 'sub'">
-                        <button class="text-red-600 hover:text-red-700" :aria-label="'Delete entry ' + (row.entry.label || '')" @click="deleteEntry(row.entry)"><span x-html="icon('x-mark', 'h-4 w-4')"></span></button>
-                      </template>
-                    </td>
+                            <button class="text-red-600 hover:text-red-700" :aria-label="'Delete entry ' + (row.entry.label || '')" @click="deleteEntry(row.entry)"><span x-html="icon('x-mark', 'h-4 w-4')"></span></button>
+                          </div>
+                        </template>
+                      </td>
+                    </template>
                   </tr>
                 </template>
               </template>
@@ -550,6 +618,101 @@
               </tfoot>
             </template>
           </table>
+        </div>
+
+        <!-- Inline manual-entry form: collapses by default; opened via the
+             "Add manual entry" button above. Lives beneath the table so the
+             user can fill it in while still seeing the week's existing
+             entries for context. -->
+        <div x-show="manualFormOpen" x-cloak x-transition class="mt-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4 dark:border-indigo-900 dark:bg-indigo-950/30">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h4 class="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Add manual entry</h4>
+            <span class="text-[11px] text-indigo-700/80 dark:text-indigo-300/80">For work missed by the scan. Counted in totals &amp; Review.</span>
+          </div>
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Label</span>
+              <input
+                type="text"
+                x-model="manualEntry.label"
+                placeholder="e.g. Customer follow-up call"
+                class="rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              />
+            </label>
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Category</span>
+              <input
+                type="text"
+                x-model="manualEntry.category"
+                placeholder="e.g. Customer · Internal · Focus"
+                class="rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              />
+            </label>
+          </div>
+
+          <div class="mt-3">
+            <div class="text-xs text-slate-600 dark:text-slate-300">Hours per day</div>
+            <div class="mt-1 grid grid-cols-7 gap-2">
+              <template x-for="i in [0,1,2,3,4,5,6]" :key="'mday-' + i">
+                <label class="flex flex-col items-center gap-1 text-[11px]">
+                  <span class="text-slate-500 dark:text-slate-400" x-text="dayLabel(i)"></span>
+                  <span class="text-[10px] text-slate-400" x-text="dayDate(i)"></span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    x-model="manualEntry.daily[i]"
+                    placeholder="0"
+                    class="w-full rounded border bg-white px-1 py-1 text-right text-sm tabular-nums dark:border-slate-700 dark:bg-slate-900"
+                  />
+                </label>
+              </template>
+            </div>
+          </div>
+
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Impact</span>
+              <div class="inline-flex w-fit overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600" role="group" aria-label="Impact">
+                <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="'mi-' + opt.v">
+                  <button
+                    type="button"
+                    @click="manualEntry.impact = opt.v"
+                    :class="impactSegmentClass(opt.v, manualEntry.impact)"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
+                    x-text="opt.l"
+                  ></button>
+                </template>
+              </div>
+            </div>
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Notes (optional)</span>
+              <textarea
+                x-model="manualEntry.notes"
+                rows="2"
+                placeholder="Context — what you actually did, outcomes, follow-ups."
+                class="resize-y rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              ></textarea>
+            </label>
+          </div>
+
+          <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              @click="cancelManualForm()"
+              :disabled="manualSaving"
+              class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+            >Cancel</button>
+            <button
+              type="button"
+              @click="saveManualEntry()"
+              :disabled="manualSaving"
+              class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <span x-html="icon('plus', 'h-4 w-4')"></span>
+              <span x-text="manualSaving ? 'Saving…' : 'Add entry'"></span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -648,17 +811,26 @@
             <h3 class="font-semibold">Top initiatives</h3>
             <ul class="mt-3 space-y-1 text-sm">
               <template x-for="t in review.top_labels" :key="t.label">
-                <li class="flex items-start justify-between border-b py-1.5 dark:border-slate-700">
-                  <div class="min-w-0 pr-3">
-                    <div class="truncate flex items-center gap-1">
-                      <template x-if="t.impact === 'high'">
-                        <span class="text-amber-500" x-html="icon('star', 'h-3.5 w-3.5')"></span>
-                      </template>
-                      <span x-text="t.label" :title="t.label"></span>
+                <li class="border-b py-1.5 dark:border-slate-700">
+                  <div class="flex items-start justify-between">
+                    <div class="min-w-0 pr-3">
+                      <div class="truncate flex items-center gap-1">
+                        <template x-if="t.impact === 'high'">
+                          <span class="text-amber-500" x-html="icon('star', 'h-3.5 w-3.5')"></span>
+                        </template>
+                        <span x-text="t.label" :title="t.label"></span>
+                      </div>
+                      <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
                     </div>
-                    <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                    <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
                   </div>
-                  <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+                  <template x-if="(t.notes || []).length">
+                    <ul class="mt-1 space-y-0.5 pl-4 text-[11px] text-slate-600 dark:text-slate-300">
+                      <template x-for="(note, ni) in t.notes" :key="t.label + '-n-' + ni">
+                        <li class="list-disc"><span class="italic" x-text="note"></span></li>
+                      </template>
+                    </ul>
+                  </template>
                 </li>
               </template>
               <template x-if="!review.top_labels.length"><li class="py-3 text-slate-500">No initiatives recorded.</li></template>
@@ -675,12 +847,21 @@
           </div>
           <ul class="mt-3 space-y-1 text-sm">
             <template x-for="t in (review?.high_impact_labels || [])" :key="'hi-' + t.label">
-              <li class="flex items-start justify-between border-b border-amber-200 py-1.5 dark:border-amber-800">
-                <div class="min-w-0 pr-3">
-                  <div class="truncate font-medium" x-text="t.label" :title="t.label"></div>
-                  <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+              <li class="border-b border-amber-200 py-1.5 dark:border-amber-800">
+                <div class="flex items-start justify-between">
+                  <div class="min-w-0 pr-3">
+                    <div class="truncate font-medium" x-text="t.label" :title="t.label"></div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                  </div>
+                  <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
                 </div>
-                <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+                <template x-if="(t.notes || []).length">
+                  <ul class="mt-1 space-y-0.5 pl-4 text-[11px] text-slate-700 dark:text-amber-100/80">
+                    <template x-for="(note, ni) in t.notes" :key="'hi-' + t.label + '-n-' + ni">
+                      <li class="list-disc"><span class="italic" x-text="note"></span></li>
+                    </template>
+                  </ul>
+                </template>
               </li>
             </template>
           </ul>

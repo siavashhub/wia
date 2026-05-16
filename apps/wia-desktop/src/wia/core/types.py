@@ -63,6 +63,13 @@ class TimeEntry(BaseModel):
     source_block_ids: list[int] = Field(default_factory=list)
     daily_hours: dict[str, float] = Field(default_factory=dict)
     """Mapping ``YYYY-MM-DD`` -> hours for that day (Mon..Fri)."""
+    notes: str = ""
+    """Free-text notes attached by the user (visible in Briefing, surfaced in Review)."""
+    manual: bool = False
+    """True when the user created this entry by hand (no Work IQ source block)."""
+    sources: list[str] = Field(default_factory=list)
+    """Signal sources that contributed to this entry (e.g. ``calendar``, ``teams``,
+    ``email``, ``inferred``, ``manual``). Surfaced as tags in the Briefing UI."""
 
 
 class TimeEntryUpdate(BaseModel):
@@ -70,6 +77,8 @@ class TimeEntryUpdate(BaseModel):
     category: str | None = None
     duration_hours: float | None = None
     impact: Impact | None = None
+    notes: str | None = None
+    daily_hours: dict[str, float] | None = None
 
 
 class BriefingTotals(BaseModel):
@@ -117,6 +126,8 @@ class TopLabel(BaseModel):
     hours: float
     weeks_active: int
     impact: Impact = Impact.MEDIUM
+    notes: list[str] = Field(default_factory=list)
+    """User-authored notes from the underlying entries (deduplicated, in order)."""
 
 
 class WeeklyPoint(BaseModel):

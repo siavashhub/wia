@@ -240,3 +240,92 @@ def test_merge_unions_source_block_ids():
     rows = _all_rows()
     assert len(rows) == 1
     assert set(rows[0].source_block_ids.split(",")) == {"1", "2", "3"}
+
+
+def test_merge_preserves_manual_row():
+    """Rows flagged ``manual=True`` (added via the manual-entry form) must
+    survive a rescan even when the new scan doesn't include them."""
+    with get_session() as s:
+        s.add(
+            TimeEntryRow(
+                label="Customer call",
+                category="Customer",
+                duration_hours=2.0,
+                confidence="high",
+                impact="medium",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                user_edited=False,
+                manual=True,
+            )
+        )
+        s.commit()
+    # A normal rescan returns unrelated entries — manual row should remain.
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Standup", category="Internal", block_ids=[1], hours=1.0)],
+    )
+    rows = {(r.label, r.category): r for r in _all_rows()}
+    assert ("Customer call", "Customer") in rows
+    assert rows[("Customer call", "Customer")].manual is True
+    assert rows[("Standup", "Internal")] is not None
+
+
+def test_replace_week_preserves_manual_row():
+    """``replace_week`` (the destructive path) must also keep manual rows."""
+    with get_session() as s:
+        s.add(
+            TimeEntryRow(
+                label="Offsite prep",
+                category="Internal",
+                duration_hours=3.0,
+                confidence="high",
+                impact="high",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                manual=True,
+            )
+        )
+        s.commit()
+    entries_repo.replace_week(
+        WEEK,
+        [_entry("Standup", category="Internal", block_ids=[1], hours=1.0)],
+    )
+    rows = {(r.label, r.category): r for r in _all_rows()}
+    assert ("Offsite prep", "Internal") in rows
+    assert rows[("Offsite prep", "Internal")].manual is True
+
+
+def test_merge_unions_signal_sources():
+    """When the same (label, category) reappears with new sources, the
+    persisted ``sources`` set should be the union — provenance is sticky."""
+    first = TimeEntry(
+        label="Customer sync",
+        category="Customer",
+        duration_hours=1.0,
+        confidence=Confidence.HIGH,
+        impact=Impact.MEDIUM,
+        source_block_ids=[1],
+        daily_hours={},
+        week_of=WEEK,
+        sources=["calendar"],
+    )
+    second = TimeEntry(
+        label="Customer sync",
+        category="Customer",
+        duration_hours=1.5,
+        confidence=Confidence.HIGH,
+        impact=Impact.MEDIUM,
+        source_block_ids=[1],
+        daily_hours={},
+        week_of=WEEK,
+        sources=["teams", "email"],
+    )
+    entries_repo.merge_week(WEEK, [first])
+    entries_repo.merge_week(WEEK, [second])
+    rows = _all_rows()
+    assert len(rows) == 1
+    persisted = sorted(s for s in rows[0].sources.split(",") if s)
+    assert persisted == ["calendar", "email", "teams"]

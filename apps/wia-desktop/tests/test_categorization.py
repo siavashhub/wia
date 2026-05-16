@@ -54,6 +54,22 @@ def test_aggregate_groups_by_label():
     assert standup_hours == 1.0
 
 
+def test_aggregate_collects_signal_sources_per_entry():
+    """Each TimeEntry should carry the deduped sorted set of signal sources
+    that contributed to it, so the Briefing UI can show provenance pills."""
+    blocks = [
+        _b("Standup", source=Source.CALENDAR, hours=0.5),
+        _b("Standup", source=Source.TEAMS, hours=0.5),
+        _b("Solo focus", source=Source.INFERRED, hours=1.0),
+    ]
+    entries = aggregate_entries(blocks)
+    by_label = {e.label: e for e in entries}
+    standup = next(e for k, e in by_label.items() if "Standup" in k)
+    assert standup.sources == ["calendar", "teams"]
+    solo = next(e for k, e in by_label.items() if "Solo focus" in k)
+    assert solo.sources == ["inferred"]
+
+
 def test_default_impact_internal_admin_low():
     assert default_impact_for_category("Internal") is Impact.LOW
     assert default_impact_for_category("admin") is Impact.LOW

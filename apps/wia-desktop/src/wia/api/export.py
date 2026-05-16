@@ -62,7 +62,17 @@ def _entries_csv(week_of: str | None) -> str:
     days = _week_days(week_of)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    header = ["category", "label", "duration_hours", "confidence", "impact", "week_of", *days]
+    header = [
+        "category",
+        "label",
+        "duration_hours",
+        "confidence",
+        "impact",
+        "manual",
+        "notes",
+        "week_of",
+        *days,
+    ]
     writer.writerow(header)
     # Group rows by category so the CSV mirrors the UI layout.
     for category, group in _group_by_category(entries).items():
@@ -73,6 +83,8 @@ def _entries_csv(week_of: str | None) -> str:
                 f"{e.duration_hours:.2f}",
                 _confidence(e.confidence),
                 e.impact.value,
+                "yes" if e.manual else "",
+                e.notes or "",
                 e.week_of or "",
                 *[f"{e.daily_hours.get(d, 0):.2f}" for d in days],
             ]
@@ -111,12 +123,17 @@ def _entries_markdown(week_of: str | None) -> str:
         for e in group:
             row = [
                 "",
-                e.label.replace("|", "\\|"),
+                (("✎ " if e.manual else "") + e.label).replace("|", "\\|"),
                 *[_hhmm(e.daily_hours.get(d, 0)) for d in days],
                 _hhmm(e.duration_hours),
                 _confidence(e.confidence),
             ]
             lines.append("| " + " | ".join(row) + " |")
+            if e.notes:
+                # Render notes as an indented bullet beneath the entry row so
+                # the table stays well-formed.
+                note_text = e.notes.replace("|", "\\|").replace("\n", " ").strip()
+                lines.append(f"| | _Notes: {note_text}_ |" + " | |" * (len(days) + 2))
     lines.append("")
     return "\n".join(lines)
 
@@ -176,16 +193,33 @@ def _entries_html(week_of: str | None) -> str:
         for d in days:
             parts.append(f"<td {num}><strong>{_hhmm(cat_daily[d])}</strong></td>")
         parts.append(f"<td {num}><strong>{_hhmm(cat_total)}</strong></td>")
-        parts.append(f"<td {cell}></td>")
-        parts.append("</tr>")
+        parts.append(f"<td {cell}></td></tr>")
+
         for e in group:
+            label_html = html.escape(e.label)
+            if e.manual:
+                label_html = (
+                    '<span title="Manual entry" style="color:#7c3aed;">&#9998;</span> ' + label_html
+                )
             parts.append("<tr>")
-            parts.append(f"<td {cell}></td><td {cell}>{html.escape(e.label)}</td>")
+            parts.append(f"<td {cell}></td><td {cell}>{label_html}</td>")
             for d in days:
                 parts.append(f"<td {num}>{_hhmm(e.daily_hours.get(d, 0))}</td>")
             parts.append(f"<td {num}>{_hhmm(e.duration_hours)}</td>")
             parts.append(f"<td {cell}>{html.escape(_confidence(e.confidence))}</td>")
             parts.append("</tr>")
+            if e.notes:
+                colspan = len(days) + 3
+                note_cell = (
+                    'style="border:1px solid #999;padding:4px 8px;background:#fafafa;'
+                    "font-style:italic;color:#555;"
+                    'font-family:Calibri,Arial,sans-serif;font-size:10.5pt;"'
+                )
+                parts.append(
+                    f"<tr><td {cell}></td>"
+                    f'<td {note_cell} colspan="{colspan}">Notes: '
+                    f"{html.escape(e.notes)}</td></tr>"
+                )
     parts.append("</tbody></table>")
     return "".join(parts)
 
@@ -297,6 +331,8 @@ def _review_markdown(rv: Review) -> str:
                 f"- {star}**{t.label}** — {t.hours:.0f}h across "
                 f"{t.weeks_active} week{'s' if t.weeks_active != 1 else ''}{cat}"
             )
+            for note in t.notes:
+                lines.append(f"  - _Notes:_ {note}")
         lines.append("")
 
     if rv.high_impact_labels:
@@ -307,6 +343,8 @@ def _review_markdown(rv: Review) -> str:
                 f"- **{t.label}** — {t.hours:.0f}h across "
                 f"{t.weeks_active} week{'s' if t.weeks_active != 1 else ''}{cat}"
             )
+            for note in t.notes:
+                lines.append(f"  - _Notes:_ {note}")
         lines.append("")
 
     if rv.insights:
@@ -397,8 +435,14 @@ def _review_html(rv: Review) -> str:
             parts.append(
                 f"<li>{star}<strong>{html.escape(t.label)}</strong>{cat} — "
                 f"{t.hours:.0f}h across {t.weeks_active} week"
-                f"{'s' if t.weeks_active != 1 else ''}</li>"
+                f"{'s' if t.weeks_active != 1 else ''}"
             )
+            if t.notes:
+                parts.append("<ul>")
+                for note in t.notes:
+                    parts.append(f"<li><em>Notes:</em> {html.escape(note)}</li>")
+                parts.append("</ul>")
+            parts.append("</li>")
         parts.append("</ul>")
 
     if rv.high_impact_labels:
@@ -408,8 +452,14 @@ def _review_html(rv: Review) -> str:
             parts.append(
                 f"<li><strong>{html.escape(t.label)}</strong>{cat} — "
                 f"{t.hours:.0f}h across {t.weeks_active} week"
-                f"{'s' if t.weeks_active != 1 else ''}</li>"
+                f"{'s' if t.weeks_active != 1 else ''}"
             )
+            if t.notes:
+                parts.append("<ul>")
+                for note in t.notes:
+                    parts.append(f"<li><em>Notes:</em> {html.escape(note)}</li>")
+                parts.append("</ul>")
+            parts.append("</li>")
         parts.append("</ul>")
 
     if rv.insights:

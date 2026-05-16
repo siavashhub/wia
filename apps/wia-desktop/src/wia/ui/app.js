@@ -75,6 +75,12 @@ function wia() {
     prefsTab: 'exclude', // 'exclude' | 'impact' | 'org'
     appVersion: '',
     expanded: {}, // { [category]: boolean }
+    notesOpen: {}, // { [entry.id]: boolean } — which entries have their notes row open
+    // Inline "Add manual entry" form. Hidden until the user clicks the
+    // Add button, lives on a single row beneath the entries table.
+    manualFormOpen: false,
+    manualEntry: { label: '', category: '', impact: 'medium', notes: '', daily: ['', '', '', '', '', '', ''] },
+    manualSaving: false,
     // Column index → label. Backend always treats Monday as week_of, so the
     // ordering here is purely a render-time preference.
     _dayLabelsMon: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -442,6 +448,57 @@ function wia() {
       }
     },
 
+    // ---- Signal-source badges -------------------------------------------
+    // Map the source tags persisted on each entry (`calendar`, `teams`,
+    // `email`, `inferred`, `manual`) to a small pill with an icon. Surfaces
+    // provenance in the Briefing table without taking much room.
+    sourceBadgeClass(src) {
+      switch (src) {
+        case 'calendar':
+          return 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300';
+        case 'teams':
+          return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300';
+        case 'email':
+          return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+        case 'inferred':
+          return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
+        case 'manual':
+          return 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300';
+        default:
+          return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+      }
+    },
+    sourceBadgeIcon(src) {
+      switch (src) {
+        case 'calendar': return 'calendar-days';
+        case 'teams': return 'chat-bubble-left-right';
+        case 'email': return 'envelope';
+        case 'inferred': return 'light-bulb';
+        case 'manual': return 'pencil-square';
+        default: return 'queue-list';
+      }
+    },
+    sourceBadgeLabel(src) {
+      switch (src) {
+        case 'calendar': return 'Calendar';
+        case 'teams': return 'Teams';
+        case 'email': return 'Email';
+        case 'inferred': return 'Inferred';
+        case 'manual': return 'Manual';
+        default: return src;
+      }
+    },
+    sourceBadgeTitle(src) {
+      switch (src) {
+        case 'calendar': return 'Signal: Outlook calendar event';
+        case 'teams': return 'Signal: Microsoft Teams activity';
+        case 'email': return 'Signal: Outlook email thread';
+        case 'inferred': return 'Signal: inferred (gap-fill / heuristic)';
+        case 'manual': return 'Signal: manual entry added by you';
+        default: return 'Signal: ' + src;
+      }
+    },
+
     async setImpact(entry, value) {
       if (!entry) return;
       const current = entry.impact || 'medium';
@@ -754,11 +811,15 @@ function wia() {
 
     groupRows(group) {
       // Returns the visible rows for a group: always the summary row, plus
-      // each entry as a sub-row when the group is expanded.
+      // each entry as a sub-row when the group is expanded. When the user
+      // has opened the notes editor for an entry, a notes row trails it.
       const rows = [{ kind: 'group', key: `g:${group.category}` }];
       if (this.expanded[group.category]) {
         for (const entry of group.entries) {
           rows.push({ kind: 'sub', key: `e:${entry.id}`, entry });
+          if (this.notesOpen[entry.id]) {
+            rows.push({ kind: 'notes', key: `n:${entry.id}`, entry });
+          }
         }
       }
       return rows;
@@ -818,6 +879,101 @@ function wia() {
           body: JSON.stringify({ label: entry.label, category: entry.category, duration_hours: entry.duration_hours }),
         });
       } catch (e) { this.error = String(e); }
+    },
+
+    // ---- Notes ----------------------------------------------------------
+    isNotesOpen(entry) {
+      return !!(entry && this.notesOpen[entry.id]);
+    },
+
+    toggleNotes(entry) {
+      if (!entry) return;
+      this.notesOpen = { ...this.notesOpen, [entry.id]: !this.notesOpen[entry.id] };
+    },
+
+    async saveNotes(entry) {
+      if (!entry) return;
+      try {
+        const r = await fetch(`/api/entries/${entry.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: entry.notes || '' }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch (e) { this.error = `Save notes failed: ${e}`; }
+    },
+
+    // ---- Manual entry form ----------------------------------------------
+    openManualForm() {
+      this.manualFormOpen = true;
+      this.manualEntry = { label: '', category: '', impact: 'medium', notes: '', daily: ['', '', '', '', '', '', ''] };
+    },
+
+    cancelManualForm() {
+      this.manualFormOpen = false;
+    },
+
+    async saveManualEntry() {
+      const label = (this.manualEntry.label || '').trim();
+      if (!label) {
+        this.error = 'Enter a label for the manual entry.';
+        return;
+      }
+      // Build daily_hours from the per-column inputs (column index → ISO day).
+      const daily = {};
+      let total = 0;
+      for (let i = 0; i < 7; i++) {
+        const raw = this.manualEntry.daily[i];
+        if (raw === '' || raw === null || raw === undefined) continue;
+        const num = Number(raw);
+        if (!Number.isFinite(num) || num <= 0) continue;
+        daily[this.dayIso(i)] = num;
+        total += num;
+      }
+      if (total <= 0) {
+        this.error = 'Enter at least one day with > 0 hours.';
+        return;
+      }
+      this.manualSaving = true;
+      this.error = null;
+      try {
+        const r = await fetch('/api/entries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            label,
+            category: (this.manualEntry.category || '').trim() || null,
+            week_of: this.briefing?.week_start || this.weekStartIso(this.weekOffset),
+            daily_hours: daily,
+            impact: this.manualEntry.impact || 'medium',
+            notes: this.manualEntry.notes || '',
+          }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const created = await r.json();
+        // Splice into the current briefing so the table reflects the
+        // change immediately without a full rescan.
+        if (this.briefing) {
+          this.briefing.entries = [...(this.briefing.entries || []), created];
+          // Roll up totals naively — Total is the only one we can compute
+          // without re-deriving meetings/focus/collab buckets. Manual
+          // entries lack source attribution, so we just bump the total.
+          if (this.briefing.totals) {
+            this.briefing.totals.total_hours = Number(
+              ((this.briefing.totals.total_hours || 0) + (created.duration_hours || 0)).toFixed(2),
+            );
+          }
+        }
+        // Expand the category bucket the new entry landed in so the user
+        // can see it without hunting for the chevron.
+        const cat = created.category || 'Uncategorized';
+        this.expanded = { ...this.expanded, [cat]: true };
+        this.manualFormOpen = false;
+      } catch (e) {
+        this.error = `Save manual entry failed: ${e}`;
+      } finally {
+        this.manualSaving = false;
+      }
     },
 
     async deleteEntry(entry) {

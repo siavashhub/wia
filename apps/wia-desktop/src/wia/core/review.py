@@ -281,6 +281,7 @@ def _top_labels(period_entries: list[TimeEntry], *, limit: int) -> list[TopLabel
                 hours=round(hours, 2),
                 weeks_active=weeks_active,
                 impact=_dominant_impact(items),
+                notes=_collect_notes(items),
             )
         )
     rows.sort(key=lambda r: r.hours, reverse=True)
@@ -310,10 +311,30 @@ def _high_impact_labels(period_entries: list[TimeEntry], *, limit: int) -> list[
                 hours=round(hours, 2),
                 weeks_active=weeks_active,
                 impact=Impact.HIGH,
+                notes=_collect_notes(items),
             )
         )
     rows.sort(key=lambda r: r.hours, reverse=True)
     return rows[:limit]
+
+
+def _collect_notes(items: list[TimeEntry]) -> list[str]:
+    """Deduplicate and return non-empty notes from ``items`` in insertion order.
+
+    Notes are the user's own narration of what an activity was about — when
+    rolling up Briefing data into a Review, surfacing them next to the
+    aggregated label is the cheapest way to give a manager-facing summary
+    real, hand-curated context.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for e in items:
+        text = (getattr(e, "notes", "") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
 
 
 def _dominant_impact(items: list[TimeEntry]) -> Impact:

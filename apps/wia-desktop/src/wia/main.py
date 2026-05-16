@@ -143,7 +143,9 @@ def run() -> None:
         sys.exit(_selfcheck())
 
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    from wia.logging_setup import configure_logging
+
+    configure_logging(settings)
 
     _set_windows_app_user_model_id("WIA.WorkIntelligenceAgent")
 
