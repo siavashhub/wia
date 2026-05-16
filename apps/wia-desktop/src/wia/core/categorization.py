@@ -125,29 +125,109 @@ def _outlook_category_hint(block: ActivityBlock) -> str | None:
     return None
 
 
+# --- Umbrella-category title extraction --------------------------------------
+# Some Outlook categories are *umbrella* tags (e.g. ``Customer``) that the
+# user applies to every customer-facing event regardless of which customer
+# it is. Categorising every one of those into a single ``Customer`` bucket
+# defeats the purpose of grouping. When the Outlook tag is in the user's
+# umbrella set we instead pull the specific customer / project code out of
+# the event title (which the user typically prefixes, e.g. ``"CTC - AVS"``).
+
+_TITLE_SPLIT_RE = re.compile(r"\s*[-\u2013\u2014:|]\s*")
+
+# Lowercase tokens that are recurrence / shape labels rather than customer
+# names. When the first title segment matches one of these we advance to
+# the next segment so ``"Weekly - CTC sync"`` extracts ``CTC sync``.
+_TITLE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "weekly",
+        "daily",
+        "monthly",
+        "biweekly",
+        "bi-weekly",
+        "sync",
+        "standup",
+        "stand-up",
+        "review",
+        "prep",
+        "focus",
+        "meeting",
+        "call",
+        "planning",
+        "intro",
+        "kickoff",
+        "kick-off",
+        "1:1",
+        "check-in",
+        "checkin",
+        "catchup",
+        "catch-up",
+        "office hours",
+    }
+)
+
+# Reject segments longer than this many characters as "probably a full
+# sentence", not a customer code.
+_MAX_DERIVED_CATEGORY_LEN = 24
+
+
+def _extract_category_from_title(title: str) -> str | None:
+    """Pull a customer / project code out of a structured event title.
+
+    Returns the first non-stopword segment when the title is shaped like
+    ``"<code> - <description>"`` (or ``\u2013`` / ``\u2014`` / ``:`` /
+    ``|``-separated). Returns ``None`` for free-form titles with no
+    separator, segments longer than :data:`_MAX_DERIVED_CATEGORY_LEN`,
+    or titles whose every segment is a recurrence stopword.
+    """
+    if not title:
+        return None
+    segments = [s.strip() for s in _TITLE_SPLIT_RE.split(title) if s.strip()]
+    if len(segments) < 2:
+        return None
+    for seg in segments:
+        if seg.lower() in _TITLE_STOPWORDS:
+            continue
+        if len(seg) > _MAX_DERIVED_CATEGORY_LEN:
+            continue
+        return seg
+    return None
+
+
 def categorize(
     block: ActivityBlock,
     *,
     keyword_map: dict[str, str] | None = None,
     internal_domains: set[str] | None = None,
+    umbrella_categories: Iterable[str] | None = None,
 ) -> tuple[str, str | None]:
     """Return ``(label, category)`` for a block.
 
     Precedence (highest first):
 
-    1. Synthetic gap-fill (``Source.INFERRED``) → ``Admin``.
-    2. User-set Outlook calendar category — the strongest signal of intent.
-    3. External participant domain → derived client name.
+    1. Synthetic gap-fill (``Source.INFERRED``) \u2192 ``Admin``.
+    2. User-set Outlook calendar category \u2014 the strongest signal of intent.
+       When the tag is in ``umbrella_categories`` (e.g. ``Customer``) we
+       derive a *more specific* category from the title prefix; the raw
+       umbrella name is only used as a last-resort fallback so a generic
+       ``Customer`` tag doesn't collapse every customer into one bucket.
+    3. External participant domain \u2192 derived client name.
     4. Title keyword map (sprint/standup/interview/...).
-    5. ``Other`` — no usable signal.
+    5. ``Other`` \u2014 no usable signal.
 
     ``internal_domains`` lets the caller mark which email domains belong
     to the user's own organisation so they don't get treated as a
     customer. Typically derived from the signed-in UPN domain (e.g.
     ``{"microsoft.com"}``).
+
+    ``umbrella_categories`` is the user-configured list of Outlook tags
+    that should trigger title-based extraction rather than being used
+    1:1. See :data:`wia.api.prefs.DEFAULT_UMBRELLA_CATEGORIES` for the
+    out-of-the-box defaults.
     """
     keyword_map = keyword_map or DEFAULT_KEYWORD_MAP
     internal_domains = internal_domains or set()
+    umbrella_set = {c.strip().lower() for c in (umbrella_categories or ()) if c}
 
     if block.source is Source.INFERRED:
         title = block.title or "Inferred"
@@ -161,6 +241,17 @@ def categorize(
     # "Customer" because it's prep work for a customer engagement).
     category = _outlook_category_hint(block)
 
+    if category is not None and category.strip().lower() in umbrella_set:
+        # Umbrella tag \u2014 try to extract a specific category from the
+        # title; fall back to an external-participant-derived name; only
+        # then surrender to the generic umbrella name.
+        derived = _extract_category_from_title(title)
+        if derived is None:
+            derived = _client_from_participants(block.participants, internal_domains)
+        if derived:
+            category = derived
+        # else: keep ``category`` as the umbrella name (better than "Other").
+
     if category is None:
         # (3) Client from external participants.
         category = _client_from_participants(block.participants, internal_domains)
@@ -170,12 +261,12 @@ def categorize(
         category = _classify_title(title, keyword_map)
 
     if category is None:
-        # (5) Nothing matched — bucket under "Other" rather than the
+        # (5) Nothing matched \u2014 bucket under "Other" rather than the
         # historical "Internal" so genuine internal work is distinguishable
         # from "we don't know".
         category = "Other"
 
-    label = f"{category} – {title}" if category and category not in title else title
+    label = f"{category} – {title}" if category and category.lower() not in title.lower() else title
     return label, category
 
 
@@ -242,6 +333,7 @@ def aggregate_entries(
     organization_label: str | None = None,
     high_impact_keywords: Iterable[str] = (),
     high_impact_categories: Iterable[str] = (),
+    umbrella_categories: Iterable[str] = (),
 ) -> list[TimeEntry]:
     """Aggregate blocks into TimeEntry rows by (label, category).
 
@@ -272,7 +364,12 @@ def aggregate_entries(
         tz = datetime.now().astimezone().tzinfo
     bucket: dict[tuple[str, str | None], list[ActivityBlock]] = defaultdict(list)
     for b in blocks:
-        key = categorize(b, keyword_map=keyword_map, internal_domains=internal_domains)
+        key = categorize(
+            b,
+            keyword_map=keyword_map,
+            internal_domains=internal_domains,
+            umbrella_categories=umbrella_categories,
+        )
         bucket[key].append(b)
 
     hi_kw_list = [

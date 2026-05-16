@@ -251,6 +251,7 @@ async def build_briefing(
         get_high_impact_calendar_categories,
         get_high_impact_keywords,
         get_organization_label,
+        get_umbrella_calendar_categories,
         is_organization_auto,
         set_organization_label,
     )
@@ -390,6 +391,7 @@ async def build_briefing(
         organization_label=organization_label or None,
         high_impact_keywords=get_high_impact_keywords(),
         high_impact_categories=get_high_impact_calendar_categories(),
+        umbrella_categories=get_umbrella_calendar_categories(),
     )
     for e in entries:
         e.week_of = week_iso

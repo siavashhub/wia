@@ -23,6 +23,7 @@ PREF_WEEK_STARTS_ON = "week_starts_on"
 PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
 PREF_HIGH_IMPACT_KEYWORDS = "high_impact_keywords"
 PREF_HIGH_IMPACT_CATEGORIES = "high_impact_calendar_categories"
+PREF_UMBRELLA_CATEGORIES = "umbrella_calendar_categories"
 PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
 PREF_ORGANIZATION = "organization_label"
 PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
@@ -42,7 +43,23 @@ MAX_HIGH_IMPACT_KEYWORDS = 100
 MAX_HIGH_IMPACT_KEYWORD_LENGTH = 100
 MAX_HIGH_IMPACT_CATEGORIES = 100
 MAX_HIGH_IMPACT_CATEGORY_LENGTH = 100
+MAX_UMBRELLA_CATEGORIES = 100
+MAX_UMBRELLA_CATEGORY_LENGTH = 100
 MAX_ORGANIZATION_LENGTH = 100
+
+# Outlook calendar categories treated as "umbrella" tags — the categoriser
+# uses them as a *signal* that an event belongs in a customer/client/vendor
+# bucket but derives the *specific* category from the event title (e.g.
+# ``CTC - AVS ANF`` under the umbrella ``Customer`` becomes a ``CTC``
+# entry, not a generic ``Customer`` bucket). Users can override via
+# ``PUT /prefs``; an empty list means "no umbrellas, use Outlook tags 1:1".
+DEFAULT_UMBRELLA_CATEGORIES: list[str] = [
+    "Customer",
+    "Client",
+    "Vendor",
+    "Partner",
+    "Account",
+]
 
 
 def _read_signals() -> list[str]:
@@ -325,6 +342,79 @@ def get_high_impact_calendar_categories() -> list[str]:
     return _read_high_impact_categories()
 
 
+def _read_umbrella_categories() -> list[str]:
+    """Return the user-configured umbrella Outlook categories.
+
+    Falls back to :data:`DEFAULT_UMBRELLA_CATEGORIES` when the pref has
+    never been set so brand-new users get sensible behaviour. An
+    explicit empty list (the user cleared the pref) is honoured and
+    disables umbrella behaviour entirely.
+    """
+    raw = prefs_store.get_pref(PREF_UMBRELLA_CATEGORIES)
+    if raw is None:
+        return list(DEFAULT_UMBRELLA_CATEGORIES)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return list(DEFAULT_UMBRELLA_CATEGORIES)
+    if not isinstance(parsed, list):
+        return list(DEFAULT_UMBRELLA_CATEGORIES)
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in parsed:
+        if not isinstance(c, str):
+            continue
+        cleaned = c.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _normalize_umbrella_categories(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            raise HTTPException(
+                status_code=400,
+                detail="umbrella_calendar_categories must all be strings",
+            )
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_UMBRELLA_CATEGORY_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"umbrella category exceeds {MAX_UMBRELLA_CATEGORY_LENGTH} "
+                    f"chars: {cleaned[:32]!r}\u2026"
+                ),
+            )
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    if len(out) > MAX_UMBRELLA_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"at most {MAX_UMBRELLA_CATEGORIES} umbrella categories allowed",
+        )
+    return out
+
+
+def get_umbrella_calendar_categories() -> list[str]:
+    """Public helper used by the categoriser: Outlook category tags that
+    should trigger title-based sub-categorisation rather than being used
+    as the literal final category."""
+    return _read_umbrella_categories()
+
+
 def get_exclude_private_meetings() -> bool:
     """Public helper: should calendar blocks marked private/personal/
     confidential be dropped before grouping?"""
@@ -399,6 +489,9 @@ class Prefs(BaseModel):
     excluded_calendar_categories: list[str] = Field(default_factory=list)
     high_impact_keywords: list[str] = Field(default_factory=list)
     high_impact_calendar_categories: list[str] = Field(default_factory=list)
+    umbrella_calendar_categories: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_UMBRELLA_CATEGORIES)
+    )
     exclude_private_meetings: bool = False
     organization_label: str = ""
     organization_label_auto: bool = False
@@ -414,6 +507,7 @@ class PrefsUpdate(BaseModel):
     excluded_calendar_categories: list[str] | None = None
     high_impact_keywords: list[str] | None = None
     high_impact_calendar_categories: list[str] | None = None
+    umbrella_calendar_categories: list[str] | None = None
     exclude_private_meetings: bool | None = None
     organization_label: str | None = None
 
@@ -429,6 +523,7 @@ async def get_prefs() -> Prefs:
         excluded_calendar_categories=_read_excluded_categories(),
         high_impact_keywords=_read_high_impact_keywords(),
         high_impact_calendar_categories=_read_high_impact_categories(),
+        umbrella_calendar_categories=_read_umbrella_categories(),
         exclude_private_meetings=_read_exclude_private(),
         organization_label=get_organization_label(),
         organization_label_auto=is_organization_auto(),
@@ -475,6 +570,9 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
     if update.high_impact_calendar_categories is not None:
         cleaned_hi_cats = _normalize_high_impact_categories(update.high_impact_calendar_categories)
         prefs_store.set_pref(PREF_HIGH_IMPACT_CATEGORIES, json.dumps(cleaned_hi_cats))
+    if update.umbrella_calendar_categories is not None:
+        cleaned_umb = _normalize_umbrella_categories(update.umbrella_calendar_categories)
+        prefs_store.set_pref(PREF_UMBRELLA_CATEGORIES, json.dumps(cleaned_umb))
     if update.exclude_private_meetings is not None:
         prefs_store.set_pref(
             PREF_EXCLUDE_PRIVATE, "true" if update.exclude_private_meetings else "false"
