@@ -35,6 +35,14 @@ from wia.core.types import ActivityBlock, Confidence, Source
 
 log = logging.getLogger(__name__)
 
+# Microsoft 365 Copilot is non-deterministic and intermittently returns
+# ``{"response": null, "error": "..."}`` for ``ask_work_iq`` — usually
+# transient capacity / routing failures. Retry a couple of times with
+# linear backoff before giving up so an unlucky scan doesn't wipe out
+# good data from the previous run.
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2.0
+
 
 @dataclass
 class WorkIQStatus:
@@ -147,6 +155,40 @@ class WorkIQClient:
         self._lock = asyncio.Lock()
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Call an MCP tool, retrying transient Copilot errors.
+
+        Microsoft 365 Copilot intermittently returns
+        ``{"response": null, "error": "..."}`` for ``ask_work_iq``. We
+        retry up to :data:`_RETRY_ATTEMPTS` times with linear backoff
+        before surfacing the failure. The final (failed) payload is
+        returned so :func:`_extract_events` can log it.
+        """
+        last_payload: Any = None
+        for attempt in range(1, _RETRY_ATTEMPTS + 1):
+            payload = await self._call_tool_once(name, arguments)
+            if not _looks_like_transient_error(payload):
+                return payload
+            last_payload = payload
+            if attempt < _RETRY_ATTEMPTS:
+                err = ""
+                if isinstance(payload, dict):
+                    err = str(payload.get("error") or "")[:160]
+                log.info(
+                    "Work IQ %s returned a transient error (attempt %d/%d): %s",
+                    name,
+                    attempt,
+                    _RETRY_ATTEMPTS,
+                    err or "<no message>",
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+        log.warning(
+            "Work IQ %s failed after %d attempts; returning last payload",
+            name,
+            _RETRY_ATTEMPTS,
+        )
+        return last_payload
+
+    async def _call_tool_once(self, name: str, arguments: dict[str, Any]) -> Any:
         """Open a fresh stdio session, call the tool, parse the result.
 
         We open a session per call for V1 simplicity; can be pooled later.
@@ -248,14 +290,24 @@ class WorkIQClient:
     async def fetch_calendar_blocks(self, start: date, end: date) -> list[ActivityBlock]:
         """Fetch every calendar event between [start, end] inclusive.
 
-        We deliberately ask for *all* events (past, future, accepted,
-        tentative, declined, all-day, recurring) so the briefing reflects
-        the user's intent — including future days of the current week
-        that haven't happened yet. Work IQ's MCP server only exposes a
-        single natural-language tool (``ask_work_iq``) backed by Microsoft
-        365 Copilot, so we coerce a JSON-shaped answer and parse it.
+        Microsoft 365 Copilot's ``ask_work_iq`` is non-deterministic and
+        \u2014 even with explicit instructions \u2014 frequently drops
+        appointment-style events that have no attendees (or only the user
+        as the sole attendee). To make sure those still show up in the
+        briefing we issue **two** queries per fetch and union the
+        results:
+
+        1. The general "every event in the range" query.
+        2. A narrow follow-up specifically for appointments / self-only
+           blocks / focus time / personal reminders.
+
+        Events that appear in both responses are deduplicated by
+        ``(start, normalised-title)``. When two payloads describe the
+        same event we keep the one whose Outlook ``categories`` /
+        ``categories_display`` is populated so the user's pinned
+        category isn't lost.
         """
-        prompt = (
+        general_prompt = (
             f"List every event on my calendar between {start.isoformat()} 00:00 "
             f"and {end.isoformat()} 23:59 (inclusive of both endpoints). "
             "Include past, current, and future events. Include accepted, "
@@ -263,34 +315,84 @@ class WorkIQClient:
             "every occurrence of recurring events whose instance falls in "
             "this range. Do NOT exclude future events or events I have "
             "not yet attended. "
+            "IMPORTANT: Also include events that have NO attendees \u2014 these are "
+            "personal time-blocks, focus blocks, reminders, and self-organised "
+            "appointments I put on my own calendar. Return them with "
+            "participants:[] (empty array). Do NOT skip them just because "
+            "they have no invitees. "
             "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
             '"organizer":"email","participants":["email"],"isOnline":true,'
             '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
             '"isPrivate":true}]}. '
             "Always include the event's Outlook categories array (use [] if none). "
-            "Always include the sensitivity field — it is one of normal, personal, "
+            "Always include the sensitivity field \u2014 it is one of normal, personal, "
             "private, or confidential. If the event is marked Private in Outlook, "
             "set sensitivity to 'private' AND set isPrivate to true. Do not omit "
             "sensitivity even if the value is 'normal'. "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are no events, return {"events":[]}.'
         )
-        try:
-            payload = await self._call_tool("ask_work_iq", {"question": prompt})
-        except Exception as exc:
-            log.warning("Work IQ ask_work_iq failed: %r", exc, exc_info=True)
-            raise
+        # Narrow follow-up: forces Copilot to look specifically at the
+        # appointment-style entries it tends to drop from the general
+        # answer. Same JSON shape so ``_extract_events`` parses both.
+        self_only_prompt = (
+            f"List every calendar entry on my own calendar between "
+            f"{start.isoformat()} 00:00 and {end.isoformat()} 23:59 that has "
+            "either NO other attendees, only me as the attendee, or is an "
+            "Outlook 'appointment' (not a meeting). Include focus time, "
+            "reminders, blocked personal time, and any self-organised "
+            "appointment I created without inviting anyone. Include events "
+            "where I am the only required attendee. Do NOT filter these out "
+            "as 'not meetings' \u2014 they are valid calendar entries I want "
+            "to see. "
+            "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
+            '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
+            '"organizer":"email","participants":["email"],"isOnline":false,'
+            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
+            '"isPrivate":true}]}. '
+            "Always include the event's Outlook categories array (use [] if none). "
+            "Use ISO 8601 timestamps with timezone offsets. "
+            'If there are none, return {"events":[]}.'
+        )
 
-        events = _extract_events(payload)
+        general_events = await self._ask_for_events(general_prompt, label="general")
+        self_only_events = await self._ask_for_events(self_only_prompt, label="self-only")
+
+        merged = _merge_event_payloads(general_events, self_only_events)
+
         blocks: list[ActivityBlock] = []
-        for ev in events:
+        for ev in merged:
             try:
                 blocks.append(_event_to_block(ev, source=Source.CALENDAR))
             except Exception as exc:
                 log.debug("Skipping malformed event %s: %s", ev, exc)
-        log.info("Work IQ returned %d calendar events for %s..%s", len(blocks), start, end)
+        no_attendee = sum(1 for b in blocks if not b.participants)
+        log.info(
+            "Work IQ returned %d calendar events for %s..%s "
+            "(general=%d, self-only=%d, %d with no attendees)",
+            len(blocks),
+            start,
+            end,
+            len(general_events),
+            len(self_only_events),
+            no_attendee,
+        )
         return blocks
+
+    async def _ask_for_events(self, prompt: str, *, label: str) -> list[dict[str, Any]]:
+        """Run ``ask_work_iq`` and return the parsed events, swallowing failure.
+
+        A failure in one of the two calendar queries should not abort the
+        whole scan \u2014 we still want the other query's events. Errors
+        are logged at WARNING.
+        """
+        try:
+            payload = await self._call_tool("ask_work_iq", {"question": prompt})
+        except Exception as exc:
+            log.warning("Work IQ ask_work_iq (%s) failed: %r", label, exc, exc_info=True)
+            return []
+        return _extract_events(payload)
 
     async def fetch_teams_blocks(self, start: date, end: date) -> list[ActivityBlock]:
         """Fetch Teams chat / call signals between [start, end] inclusive.
@@ -506,6 +608,82 @@ def _pick_str(obj: dict[str, Any], keys: tuple[str, ...]) -> str:
         if isinstance(v, str) and v.strip():
             return v
     return ""
+
+
+def _looks_like_transient_error(payload: Any) -> bool:
+    """Return ``True`` for Copilot's ``{response: null, error: "..."}`` envelope.
+
+    Used by :meth:`WorkIQClient._call_tool` to decide whether to retry.
+    A payload counts as transient when it carries an ``error`` field AND
+    its ``response`` is missing / null / empty.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "error" not in payload:
+        return False
+    resp = payload.get("response")
+    if resp is None:
+        return True
+    return isinstance(resp, str) and not resp.strip()
+
+
+def _event_dedup_key(ev: dict[str, Any]) -> tuple[str, str]:
+    """Stable key for deduplicating events across the two calendar queries.
+
+    We key on ``(start, normalised-title)`` because Copilot occasionally
+    reformats whitespace / casing in titles between calls but never the
+    start timestamp.
+    """
+    start = str(ev.get("start") or "").strip()
+    title = str(ev.get("title") or "").strip().lower()
+    title = " ".join(title.split())
+    return (start, title)
+
+
+def _has_categories(ev: dict[str, Any]) -> bool:
+    """True when this event payload carries Outlook categories.
+
+    Used by the merge to pick the "richer" copy when both calendar
+    queries returned the same event \u2014 the response that retained
+    ``categories`` is the one whose category pinning we want to keep.
+    """
+    cats = ev.get("categories")
+    if isinstance(cats, list) and any(isinstance(c, str) and c.strip() for c in cats):
+        return True
+    display = ev.get("categories_display") or ev.get("categoriesDisplay")
+    return bool(isinstance(display, str) and display.strip())
+
+
+def _merge_event_payloads(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Union two ``ask_work_iq`` event lists, keeping the richer copy on overlap.
+
+    ``primary`` events come first in the output; events from
+    ``secondary`` that aren't already keyed in ``primary`` are appended.
+    When both lists describe the same event (same dedup key) we keep the
+    one with populated Outlook categories so a category-stripped copy
+    can't shadow a category-bearing one.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+    for ev in primary:
+        if not isinstance(ev, dict):
+            continue
+        key = _event_dedup_key(ev)
+        merged[key] = ev
+        order.append(key)
+    for ev in secondary:
+        if not isinstance(ev, dict):
+            continue
+        key = _event_dedup_key(ev)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = ev
+            order.append(key)
+        elif _has_categories(ev) and not _has_categories(existing):
+            merged[key] = ev
+    return [merged[k] for k in order]
 
 
 def _extract_events(payload: Any) -> list[dict[str, Any]]:

@@ -473,9 +473,7 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
         cleaned_hi = _normalize_high_impact_keywords(update.high_impact_keywords)
         prefs_store.set_pref(PREF_HIGH_IMPACT_KEYWORDS, json.dumps(cleaned_hi))
     if update.high_impact_calendar_categories is not None:
-        cleaned_hi_cats = _normalize_high_impact_categories(
-            update.high_impact_calendar_categories
-        )
+        cleaned_hi_cats = _normalize_high_impact_categories(update.high_impact_calendar_categories)
         prefs_store.set_pref(PREF_HIGH_IMPACT_CATEGORIES, json.dumps(cleaned_hi_cats))
     if update.exclude_private_meetings is not None:
         prefs_store.set_pref(

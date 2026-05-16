@@ -139,6 +139,124 @@ def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
         session.commit()
 
 
+def _row_block_ids(row: TimeEntryRow) -> set[int]:
+    return {int(x) for x in row.source_block_ids.split(",") if x}
+
+
+# Categories we treat as "no real signal" — a later scan that produces one
+# of these for an event we previously labelled with a real category is
+# almost always Copilot dropping the ``categories_display`` /
+# ``participants`` metadata, not a genuine re-categorisation. Don't let
+# such a scan regress a good earlier label.
+_WEAK_CATEGORIES = frozenset({"Other", "Admin"})
+
+
+def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
+    """Additive scan: update / insert without deleting non-incoming rows.
+
+    The default rescan path. Protects the week's data from Copilot's
+    non-determinism: a scan that returns a partial answer *augments*
+    what's already there rather than wiping out entries from a previous,
+    more complete scan. Use :func:`replace_week` or :func:`delete_week`
+    when the user explicitly asks for a clean rebuild.
+
+    Matching logic for "is this incoming entry already in the DB?":
+
+    1. **Block-id overlap** — any non-edited existing row whose
+       ``source_block_ids`` shares at least one id with the incoming
+       entry's ids. Catches the case where a previous categorisation bug
+       has been fixed and the same underlying meeting now has a
+       different ``(label, category)``.
+    2. **(label, category) match** — fallback for synthetic blocks
+       (Admin / Focus time) and any entries with no recorded
+       ``source_block_ids``.
+
+    Regression guard: when the matched row already has a "real" category
+    (anything other than ``Other`` / ``Admin``) and the incoming entry
+    has a weak one, we keep the existing label/category and only refresh
+    the volatile fields (hours, impact, daily breakdown). This stops a
+    flaky rescan that lost an event's ``categories_display`` metadata
+    from demoting a previously-good Customer row to ``Other``.
+
+    User-edited rows (``user_edited=True``) are never updated or
+    deleted.
+    """
+    with get_session() as session:
+        existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
+        # Partition existing rows so we can match incoming entries by block-id
+        # overlap (preferred) and then by (label, category) as a fallback.
+        non_edited: list[TimeEntryRow] = []
+        edited_keys: set[tuple[str, str | None]] = set()
+        edited_block_ids: set[int] = set()
+        for row in existing:
+            if row.user_edited:
+                edited_keys.add((row.label, row.category))
+                edited_block_ids.update(_row_block_ids(row))
+            else:
+                non_edited.append(row)
+        by_key: dict[tuple[str, str | None], TimeEntryRow] = {
+            (r.label, r.category): r for r in non_edited
+        }
+        by_block_id: dict[int, TimeEntryRow] = {}
+        for r in non_edited:
+            for bid in _row_block_ids(r):
+                by_block_id[bid] = r
+
+        for entry in entries:
+            entry.week_of = week_of
+            key = (entry.label, entry.category)
+            # 1. User-edited row wins outright. Don't insert a duplicate.
+            if key in edited_keys:
+                continue
+            entry_block_ids = {i for i in entry.source_block_ids if i is not None}
+            # If any incoming block id belongs to a user-edited row, skip
+            # \u2014 the user has spoken for that activity.
+            if entry_block_ids & edited_block_ids:
+                continue
+
+            # 2. Match by block-id overlap first (covers re-categorisations).
+            target: TimeEntryRow | None = None
+            for bid in entry_block_ids:
+                if bid in by_block_id:
+                    target = by_block_id[bid]
+                    break
+            # 3. Fall back to (label, category) match.
+            if target is None:
+                target = by_key.get(key)
+
+            if target is not None:
+                # In-place update; the latest scan is truth for hours/impact.
+                # Regression guard: a weak incoming category (Other/Admin)
+                # over a real existing one is almost always Copilot
+                # dropping metadata, not a genuine re-categorisation.
+                existing_strong = (target.category or "") not in _WEAK_CATEGORIES
+                incoming_weak = (entry.category or "") in _WEAK_CATEGORIES
+                if not (existing_strong and incoming_weak):
+                    target.label = entry.label
+                    target.category = entry.category
+                target.duration_hours = entry.duration_hours
+                target.confidence = entry.confidence.value
+                target.impact = entry.impact.value
+                # Union the block-id sets so we don't lose provenance from
+                # earlier scans when an incoming entry only reports a
+                # subset.
+                merged_ids = sorted(_row_block_ids(target) | entry_block_ids)
+                target.source_block_ids = ",".join(str(i) for i in merged_ids)
+                target.daily_hours = json.dumps(entry.daily_hours or {})
+                session.add(target)
+                # Refresh indexes so a later incoming entry doesn't also
+                # match this same row.
+                by_key.pop((target.label, target.category), None)
+                for bid in list(by_block_id):
+                    if by_block_id[bid] is target:
+                        by_block_id.pop(bid, None)
+            else:
+                new_row = _entry_to_row(entry)
+                new_row.id = None
+                session.add(new_row)
+        session.commit()
+
+
 def delete_week(week_of: str) -> int:
     """Delete *every* entry for ``week_of`` — including user-edited rows.
 

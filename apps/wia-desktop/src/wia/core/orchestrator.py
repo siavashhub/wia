@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime
 
 from wia.core.categorization import aggregate_entries
-from wia.core.grouping import fill_gaps, merge_blocks
+from wia.core.grouping import clamp_long_blocks, dedup_across_sources, fill_gaps, merge_blocks
 from wia.core.types import (
     ActivityBlock,
     Briefing,
@@ -147,6 +147,47 @@ def _derive_organization_from_blocks(blocks: list[ActivityBlock]) -> str | None:
         return None
     top_domain = max(counts.items(), key=lambda kv: kv[1])[0]
     return derive_organization_label_from_domain(top_domain) or None
+
+
+def _build_internal_domains(
+    organization_label: str | None, blocks: list[ActivityBlock]
+) -> set[str]:
+    """Return the set of email domains that should be treated as the user's
+    own organisation (and therefore *not* count as a "client" domain).
+
+    Sources, in order of trust:
+
+    1. The signed-in user's UPN domain (``syousefi@microsoft.com`` →
+       ``microsoft.com``). This is the only fully-trusted source.
+    2. The auto-derived organisation label converted back to a likely
+       domain (``"Microsoft"`` → ``microsoft.com``). Best-effort — many
+       orgs have hyphenated names that don't round-trip — so we only use
+       it as a hint.
+    3. The single most-frequent participant domain across this week's
+       blocks. Same heuristic as :func:`_derive_organization_from_blocks`,
+       but kept here as a last-resort backstop for when the user hasn't
+       signed in yet.
+    """
+    from wia.api.prefs import get_user_identity
+
+    domains: set[str] = set()
+    upn, _ = get_user_identity()
+    if upn and "@" in upn:
+        domains.add(upn.split("@", 1)[1].strip().lower())
+    if organization_label:
+        slug = organization_label.strip().lower().replace(" ", "")
+        if slug:
+            domains.add(f"{slug}.com")
+    if not domains and blocks:
+        counts: dict[str, int] = defaultdict(int)
+        for b in blocks:
+            for raw in b.participants:
+                m = _EMAIL_DOMAIN_RE.search(raw or "")
+                if m:
+                    counts[m.group(1).lower()] += 1
+        if counts:
+            domains.add(max(counts.items(), key=lambda kv: kv[1])[0])
+    return domains
 
 
 async def build_briefing(
@@ -302,7 +343,15 @@ async def build_briefing(
             status="workiq-not-enabled",
         )
 
-    # 2. Group + (only if we have real signals) fill gaps.
+    # 2. Dedup across signals (calendar > teams > email) and clamp blocks
+    # whose duration is obviously not "active time" — e.g. Outlook all-day
+    # events spanning 24h, or Teams/email "ongoing thread" blocks Work IQ
+    # reports with start/end across the whole week. Without this a single
+    # email thread can balloon into 90+ hours for the week.
+    raw_blocks = dedup_across_sources(raw_blocks)
+    raw_blocks = clamp_long_blocks(raw_blocks)
+
+    # 3. Group + (only if we have real signals) fill gaps.
     # When Work IQ returns zero events we deliberately skip gap-filling so
     # we don't synthesize 40 fake hours of "Admin" for an empty week.
     # Gap-filling only runs on weekdays — we don't want to synthesize
@@ -325,9 +374,19 @@ async def build_briefing(
             set_organization_label(derived, auto=True)
             organization_label = derived
 
-    # 3. Categorize → entries
+    # Build the set of "internal" email domains so the categorizer knows
+    # which attendees represent the user's own organisation (and therefore
+    # don't make a meeting a "client" meeting). We start from the signed-
+    # in UPN's domain — that's the only one we can verify — and add the
+    # auto-derived top domain when it differs. Any participant on those
+    # domains will be ignored when picking a client name; any *other*
+    # external participant (even a single one) wins.
+    internal_domains = _build_internal_domains(organization_label, raw_blocks)
+
+    # 4. Categorize → entries
     entries = aggregate_entries(
         all_blocks,
+        internal_domains=internal_domains,
         organization_label=organization_label or None,
         high_impact_keywords=get_high_impact_keywords(),
         high_impact_categories=get_high_impact_calendar_categories(),
@@ -335,8 +394,12 @@ async def build_briefing(
     for e in entries:
         e.week_of = week_iso
 
-    # 4. Persist (replace existing for this week unless user has manual edits)
-    entries_repo.replace_week(week_iso, entries)
+    # 5. Persist additively. ``merge_week`` updates / inserts in place but
+    # never deletes rows that aren't in this scan \u2014 so a flaky Copilot
+    # response that returns fewer events than a previous run won't wipe
+    # out good data. Use the explicit "remove week" UI action (which
+    # calls ``entries_repo.delete_week``) for a clean rebuild.
+    entries_repo.merge_week(week_iso, entries)
     entries = entries_repo.list_entries(week_of=week_iso)
 
     return Briefing(

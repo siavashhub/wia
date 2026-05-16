@@ -83,6 +83,13 @@ def _classify_title(title: str, keyword_map: dict[str, str]) -> str | None:
 def _client_from_participants(
     participants: Iterable[str], internal_domains: set[str]
 ) -> str | None:
+    """Pick a category label from external (non-internal) participant domains.
+
+    *Any* external participant wins, even if internal attendees outnumber
+    them — a customer meeting with 10 Microsoft people and 1 customer
+    representative is still a customer meeting. When multiple external
+    domains are present, the most frequent wins.
+    """
     external_domains: dict[str, int] = defaultdict(int)
     for email in participants:
         m = re.search(r"@([^>\s]+)", email)
@@ -100,13 +107,45 @@ def _client_from_participants(
     return label
 
 
+def _outlook_category_hint(block: ActivityBlock) -> str | None:
+    """Return the first Outlook calendar category set on ``block`` (display
+    casing), or ``None`` if the block has no categories.
+
+    The Work IQ MCP client stores Outlook categories in two metadata
+    fields: ``categories`` (lowercase, ``|``-joined, used for matching)
+    and ``categories_display`` (original casing, ``", "``-joined, used
+    here so the UI shows the user's chosen capitalisation).
+    """
+    display = (block.metadata.get("categories_display") or "").strip()
+    if display:
+        return display.split(",")[0].strip() or None
+    raw = (block.metadata.get("categories") or "").strip()
+    if raw:
+        return raw.split("|")[0].strip().title() or None
+    return None
+
+
 def categorize(
     block: ActivityBlock,
     *,
     keyword_map: dict[str, str] | None = None,
     internal_domains: set[str] | None = None,
 ) -> tuple[str, str | None]:
-    """Return (label, category) for a block."""
+    """Return ``(label, category)`` for a block.
+
+    Precedence (highest first):
+
+    1. Synthetic gap-fill (``Source.INFERRED``) → ``Admin``.
+    2. User-set Outlook calendar category — the strongest signal of intent.
+    3. External participant domain → derived client name.
+    4. Title keyword map (sprint/standup/interview/...).
+    5. ``Other`` — no usable signal.
+
+    ``internal_domains`` lets the caller mark which email domains belong
+    to the user's own organisation so they don't get treated as a
+    customer. Typically derived from the signed-in UPN domain (e.g.
+    ``{"microsoft.com"}``).
+    """
     keyword_map = keyword_map or DEFAULT_KEYWORD_MAP
     internal_domains = internal_domains or set()
 
@@ -115,9 +154,26 @@ def categorize(
         return title, "Admin"
 
     title = block.title or "Untitled"
-    # Client (external participant) wins; keyword map is a fallback.
-    client = _client_from_participants(block.participants, internal_domains)
-    category = client if client is not None else _classify_title(title, keyword_map) or "Internal"
+
+    # (2) User-set Outlook category wins outright when present. This lets
+    # the user pin a calendar event to a category that the heuristics
+    # would never have picked (e.g. an internal-only event tagged
+    # "Customer" because it's prep work for a customer engagement).
+    category = _outlook_category_hint(block)
+
+    if category is None:
+        # (3) Client from external participants.
+        category = _client_from_participants(block.participants, internal_domains)
+
+    if category is None:
+        # (4) Title keyword fallback (sprint/standup/...).
+        category = _classify_title(title, keyword_map)
+
+    if category is None:
+        # (5) Nothing matched — bucket under "Other" rather than the
+        # historical "Internal" so genuine internal work is distinguishable
+        # from "we don't know".
+        category = "Other"
 
     label = f"{category} – {title}" if category and category not in title else title
     return label, category
@@ -137,6 +193,11 @@ def aggregate_entries(
 
     ``tz`` controls which calendar day a block is attributed to in
     ``daily_hours``. Defaults to the system local timezone.
+
+    ``internal_domains`` is the set of email domains that belong to the
+    user's own organisation. Blocks whose participants are *only* from
+    these domains will not be assigned a "client" category (see
+    :func:`_client_from_participants`).
 
     ``organization_label`` is the user's own org name (derived from their
     sign-in domain, e.g. ``"Microsoft"``). Categories matching it default

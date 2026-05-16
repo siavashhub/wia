@@ -175,3 +175,52 @@ def test_aggregate_high_impact_category_no_match_keeps_default():
     entries = aggregate_entries(blocks, high_impact_categories=["customer"])
     assert entries[0].impact is Impact.LOW
 
+
+# --- new categorization-priority tests ---
+
+
+def test_outlook_category_wins_over_participants():
+    """A user-set Outlook calendar category overrides domain inference."""
+    block = _b("Standup", participants=["alice@client-a.com"], source=Source.CALENDAR)
+    block.metadata["categories_display"] = "Customer"
+    block.metadata["categories"] = "customer"
+    _label, cat = categorize(block, internal_domains={"contoso.com"})
+    assert cat == "Customer"
+
+
+def test_external_participant_wins_even_when_outnumbered():
+    """One customer attendee beats a roomful of internal Microsoft folks."""
+    participants = [f"msft{i}@microsoft.com" for i in range(20)] + ["pm@customer.com"]
+    _label, cat = categorize(
+        _b("City of X — ALZ deployment", participants=participants),
+        internal_domains={"microsoft.com"},
+    )
+    assert cat == "Customer"
+
+
+def test_internal_only_attendees_fall_through_to_keyword_or_other():
+    # Internal-only attendees with no keyword hit → "Other" (was "Internal").
+    _label, cat = categorize(
+        _b("Adhoc sync", participants=["a@microsoft.com", "b@microsoft.com"]),
+        internal_domains={"microsoft.com"},
+    )
+    assert cat == "Other"
+    # Internal-only attendees with a keyword hit still get the keyword
+    # category.
+    _label, cat = categorize(
+        _b("Sprint planning", participants=["a@microsoft.com"]),
+        internal_domains={"microsoft.com"},
+    )
+    assert cat == "Internal"
+
+
+def test_no_attendee_no_keyword_is_other():
+    _label, cat = categorize(_b("Block out", participants=[]))
+    assert cat == "Other"
+
+
+def test_no_attendee_with_outlook_category_uses_tag():
+    block = _b("Block out", participants=[], source=Source.CALENDAR)
+    block.metadata["categories_display"] = "Customer"
+    _label, cat = categorize(block)
+    assert cat == "Customer"
