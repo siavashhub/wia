@@ -1,6 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from wia.core.grouping import fill_gaps, merge_blocks
+from wia.core.grouping import clamp_long_blocks, dedup_across_sources, fill_gaps, merge_blocks
 from wia.core.types import ActivityBlock, Confidence, Source
 
 
@@ -35,3 +35,114 @@ def test_fill_gaps_inserts_admin_and_focus():
     titles = [b.title for b in out]
     assert "Admin / Follow-up" in titles
     assert "Focus time" in titles
+
+
+# --- cross-source dedup ---
+
+
+def test_dedup_keeps_calendar_drops_teams_with_same_title():
+    cal = _b(10, 11, "Friedfrank — ALZ sync", source=Source.CALENDAR)
+    teams = _b(10, 11, "friedfrank alz sync", source=Source.TEAMS)
+    out = dedup_across_sources([cal, teams])
+    assert len(out) == 1
+    assert out[0].source is Source.CALENDAR
+
+
+def test_dedup_keeps_calendar_drops_email_with_re_prefix():
+    cal = _b(10, 11, "ALZ Assessment", source=Source.CALENDAR)
+    email = _b(10, 11, "Re: ALZ Assessment", source=Source.EMAIL)
+    out = dedup_across_sources([cal, email])
+    assert len(out) == 1
+    assert out[0].source is Source.CALENDAR
+
+
+def test_dedup_keeps_distinct_titles():
+    a = _b(10, 11, "Standup", source=Source.CALENDAR)
+    b = _b(14, 15, "Design review", source=Source.CALENDAR)
+    out = dedup_across_sources([a, b])
+    assert len(out) == 2
+
+
+def test_dedup_drops_lower_priority_with_temporal_overlap():
+    cal = _b(10, 12, "Workshop", source=Source.CALENDAR)
+    # Email "thread" with completely different title but overlapping time.
+    email = ActivityBlock(
+        start=datetime(2026, 4, 20, 10, 30, tzinfo=UTC),
+        end=datetime(2026, 4, 20, 11, 30, tzinfo=UTC),
+        title="Re: random subject line",
+        source=Source.EMAIL,
+        confidence=Confidence.MEDIUM,
+    )
+    out = dedup_across_sources([cal, email])
+    assert len(out) == 1
+    assert out[0].source is Source.CALENDAR
+
+
+def test_dedup_propagates_dropped_source_onto_winner():
+    """When Teams/email duplicates a calendar meeting, the kept calendar
+    block must record the dropped sources in ``metadata["merged_sources"]``
+    so the Briefing UI can still show Teams/Email provenance pills."""
+    cal = _b(10, 11, "ALZ Assessment", source=Source.CALENDAR)
+    teams = _b(10, 11, "alz assessment", source=Source.TEAMS)
+    email = _b(10, 11, "Re: ALZ Assessment", source=Source.EMAIL)
+    out = dedup_across_sources([cal, teams, email])
+    assert len(out) == 1
+    winner = out[0]
+    assert winner.source is Source.CALENDAR
+    extras = sorted(s for s in winner.metadata.get("merged_sources", "").split(",") if s)
+    assert extras == ["email", "teams"]
+
+
+# --- clamping ---
+
+
+def test_clamp_passes_normal_block_through():
+    b = _b(10, 11)
+    out = clamp_long_blocks([b])
+    assert len(out) == 1
+    assert out[0].duration_hours == 1.0
+
+
+def test_clamp_clips_teams_thread_spanning_week():
+    thread = ActivityBlock(
+        start=datetime(2026, 4, 20, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 4, 24, 17, 0, tzinfo=UTC),  # ~104h
+        title="Group chat OUCH",
+        source=Source.TEAMS,
+        confidence=Confidence.MEDIUM,
+    )
+    out = clamp_long_blocks([thread], max_hours_per_day=8.0)
+    assert len(out) == 1
+    assert out[0].duration_hours == 8.0
+
+
+def test_clamp_splits_all_day_multi_day_calendar_event():
+    # Mon..Wed 24h all-day style event → emit one capped block per weekday.
+    all_day = ActivityBlock(
+        start=datetime(2026, 4, 20, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 4, 23, 0, 0, tzinfo=UTC),
+        title="Conference",
+        source=Source.CALENDAR,
+        confidence=Confidence.HIGH,
+    )
+    out = clamp_long_blocks([all_day], max_hours_per_day=8.0)
+    assert len(out) == 3
+    assert all(b.duration_hours == 8.0 for b in out)
+
+
+def test_clamp_skips_weekends_for_multiday_calendar_event():
+    # Fri 12:00 UTC..Mon 12:00 UTC spans weekend → only Fri + Mon emitted.
+    # Use midday to keep the local-date stable across test-runner TZs.
+    fri_noon = datetime(2026, 4, 24, 12, 0, tzinfo=UTC)
+    all_day = ActivityBlock(
+        start=fri_noon,
+        end=fri_noon + timedelta(days=3),
+        title="Long event",
+        source=Source.CALENDAR,
+        confidence=Confidence.HIGH,
+    )
+    out = clamp_long_blocks([all_day], max_hours_per_day=8.0)
+    weekdays = {b.start.astimezone().weekday() for b in out}
+    assert weekdays.issubset({0, 1, 2, 3, 4})  # no weekend days
+    assert len(out) <= 3  # at most Fri + Mon (+ possible same-day-overlap)
+    assert len(out) >= 2

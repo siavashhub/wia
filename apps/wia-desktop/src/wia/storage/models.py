@@ -32,6 +32,10 @@ class TimeEntryRow(SQLModel, table=True):
     source_block_ids: str = ""  # comma-joined ints
     user_edited: bool = False
     daily_hours: str = ""  # JSON-encoded dict[str, float]
+    impact: str = "medium"  # "high" | "medium" | "low"
+    notes: str = ""  # free-text notes the user attaches in WIA Briefing
+    manual: bool = False  # entry was created by the user (no Work IQ source)
+    sources: str = ""  # comma-joined signal sources (calendar/teams/email/inferred/manual)
 
 
 class UserPref(SQLModel, table=True):

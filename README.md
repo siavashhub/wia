@@ -86,6 +86,17 @@ uv run ruff check .             # lint
 uv run ruff format .            # format
 ```
 
+To enable DevTools -> PowerShell (per-session):
+```powershell
+$env:WIA_DEBUG = "1"; uv run wia-desktop
+```
+to disable:
+```powershell
+Remove-Item Env:WIA_DEBUG; uv run wia-desktop
+```
+
+
+
 CI runs on `windows-latest` against Python **3.12**. Don't introduce changes that only pass on Linux/macOS.
 
 ### Expose WIA to Copilot Chat
@@ -144,6 +155,30 @@ version.json              # release version source of truth
 - User content (calendar, email, briefings) is never logged above `DEBUG`.
 - The SQLite DB at `%LOCALAPPDATA%\WIA\WIA\wia.db` is user-private.
 - CodeQL + Dependency Review run on every PR.
+
+## Logs & troubleshooting
+
+WIA writes a rotating log file to make support and self-diagnosis possible:
+
+- **Location:** `%LOCALAPPDATA%\WIA\WIA\logs\wia.log`
+- **Rotation:** daily at midnight (local time), 30 days retained (`wia.log`, `wia.log.2026-05-15`, …).
+- **Default level:** `INFO`. User content (calendar, email, briefing rows) is only written at `DEBUG`.
+- **Inspect from the app:** `GET http://127.0.0.1:<port>/api/health/logs` returns the active log file path, level, and retention.
+
+Override via environment variables (all prefixed `WIA_`):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WIA_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. `DEBUG` includes user content — share carefully. |
+| `WIA_LOG_TO_FILE` | `1` | Set to `0` to disable file logging (console only). |
+| `WIA_LOG_RETENTION_DAYS` | `30` | Number of rotated daily files to keep. |
+| `WIA_LOG_DIR` | _(unset)_ | Override the log directory; defaults to `<data_dir>/logs`. |
+
+Enable verbose logs for one session:
+
+```pwsh
+$env:WIA_LOG_LEVEL = "DEBUG"; uv run wia-desktop
+```
 
 ## Releasing
 

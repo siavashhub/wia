@@ -6,7 +6,8 @@ import json
 
 from sqlmodel import select
 
-from wia.core.types import Confidence, TimeEntry, TimeEntryUpdate
+from wia.core.categorization import infer_sources_from_label
+from wia.core.types import Confidence, Impact, TimeEntry, TimeEntryUpdate
 from wia.storage.db import get_session
 from wia.storage.models import TimeEntryRow
 
@@ -18,15 +19,29 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
             daily = {}
     except json.JSONDecodeError:
         daily = {}
+    try:
+        impact = Impact(row.impact) if row.impact else Impact.MEDIUM
+    except ValueError:
+        impact = Impact.MEDIUM
+    sources = [s for s in (row.sources or "").split(",") if s]
+    if not sources and not row.manual:
+        # Backfill rows that pre-date the ``sources`` column with a
+        # best-guess from the label so the UI shows *some* tag. Manual
+        # rows already get ``["manual"]`` at create-time; don't override.
+        sources = infer_sources_from_label(row.label, row.category)
     return TimeEntry(
         id=row.id,
         label=row.label,
         category=row.category,
         duration_hours=row.duration_hours,
         confidence=Confidence(row.confidence),
+        impact=impact,
         week_of=row.week_of,
         source_block_ids=[int(x) for x in row.source_block_ids.split(",") if x],
         daily_hours=daily,
+        notes=row.notes or "",
+        manual=bool(row.manual),
+        sources=sources,
     )
 
 
@@ -41,6 +56,10 @@ def _entry_to_row(entry: TimeEntry, *, user_edited: bool = False) -> TimeEntryRo
         source_block_ids=",".join(str(i) for i in entry.source_block_ids),
         user_edited=user_edited,
         daily_hours=json.dumps(entry.daily_hours or {}),
+        impact=entry.impact.value,
+        notes=entry.notes or "",
+        manual=bool(entry.manual),
+        sources=",".join(entry.sources or []),
     )
 
 
@@ -74,6 +93,9 @@ def list_entries_in_range(start_iso: str, end_iso: str) -> list[TimeEntry]:
 
 def create_entry(entry: TimeEntry) -> TimeEntry:
     with get_session() as session:
+        # Entries created through this path come from the UI's manual-add
+        # flow — flag them so a subsequent rescan won't overwrite them.
+        entry.manual = True
         row = _entry_to_row(entry, user_edited=True)
         row.id = None
         session.add(row)
@@ -89,7 +111,15 @@ def update_entry(entry_id: int, update: TimeEntryUpdate) -> TimeEntry | None:
             return None
         data = update.model_dump(exclude_unset=True)
         for key, val in data.items():
-            setattr(row, key, val)
+            if key == "impact" and val is not None:
+                # Pydantic dump leaves enums as enum instances by default.
+                setattr(row, key, val.value if hasattr(val, "value") else str(val))
+            elif key == "daily_hours":
+                row.daily_hours = json.dumps(val or {})
+                if val:
+                    row.duration_hours = round(sum(float(v) for v in val.values()), 4)
+            else:
+                setattr(row, key, val)
         row.user_edited = True
         session.add(row)
         session.commit()
@@ -108,17 +138,151 @@ def delete_entry(entry_id: int) -> bool:
 
 
 def replace_week(week_of: str, entries: list[TimeEntry]) -> None:
-    """Delete non-edited entries for a week and insert fresh rows."""
+    """Delete non-edited entries for a week and insert fresh rows.
+
+    User-edited rows are preserved across rescans. To avoid showing two
+    rows for the same activity (one edited, one freshly aggregated) we
+    skip inserting any new entry whose ``(label, category)`` collides
+    with a kept user-edited row \u2014 the user's edit wins.
+    """
     with get_session() as session:
         existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
+        kept_keys: set[tuple[str, str | None]] = set()
         for row in existing:
-            if not row.user_edited:
+            if row.user_edited or row.manual:
+                kept_keys.add((row.label, row.category))
+            else:
                 session.delete(row)
         for entry in entries:
+            if (entry.label, entry.category) in kept_keys:
+                continue
             entry.week_of = week_of
             new_row = _entry_to_row(entry)
             new_row.id = None
             session.add(new_row)
+        session.commit()
+
+
+def _row_block_ids(row: TimeEntryRow) -> set[int]:
+    return {int(x) for x in row.source_block_ids.split(",") if x}
+
+
+# Categories we treat as "no real signal" — a later scan that produces one
+# of these for an event we previously labelled with a real category is
+# almost always Copilot dropping the ``categories_display`` /
+# ``participants`` metadata, not a genuine re-categorisation. Don't let
+# such a scan regress a good earlier label.
+_WEAK_CATEGORIES = frozenset({"Other", "Admin"})
+
+
+def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
+    """Additive scan: update / insert without deleting non-incoming rows.
+
+    The default rescan path. Protects the week's data from Copilot's
+    non-determinism: a scan that returns a partial answer *augments*
+    what's already there rather than wiping out entries from a previous,
+    more complete scan. Use :func:`replace_week` or :func:`delete_week`
+    when the user explicitly asks for a clean rebuild.
+
+    Matching logic for "is this incoming entry already in the DB?":
+
+    1. **Block-id overlap** — any non-edited existing row whose
+       ``source_block_ids`` shares at least one id with the incoming
+       entry's ids. Catches the case where a previous categorisation bug
+       has been fixed and the same underlying meeting now has a
+       different ``(label, category)``.
+    2. **(label, category) match** — fallback for synthetic blocks
+       (Admin / Focus time) and any entries with no recorded
+       ``source_block_ids``.
+
+    Regression guard: when the matched row already has a "real" category
+    (anything other than ``Other`` / ``Admin``) and the incoming entry
+    has a weak one, we keep the existing label/category and only refresh
+    the volatile fields (hours, impact, daily breakdown). This stops a
+    flaky rescan that lost an event's ``categories_display`` metadata
+    from demoting a previously-good Customer row to ``Other``.
+
+    User-edited rows (``user_edited=True``) are never updated or
+    deleted.
+    """
+    with get_session() as session:
+        existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
+        # Partition existing rows so we can match incoming entries by block-id
+        # overlap (preferred) and then by (label, category) as a fallback.
+        non_edited: list[TimeEntryRow] = []
+        edited_keys: set[tuple[str, str | None]] = set()
+        edited_block_ids: set[int] = set()
+        for row in existing:
+            if row.user_edited or row.manual:
+                edited_keys.add((row.label, row.category))
+                edited_block_ids.update(_row_block_ids(row))
+            else:
+                non_edited.append(row)
+        by_key: dict[tuple[str, str | None], TimeEntryRow] = {
+            (r.label, r.category): r for r in non_edited
+        }
+        by_block_id: dict[int, TimeEntryRow] = {}
+        for r in non_edited:
+            for bid in _row_block_ids(r):
+                by_block_id[bid] = r
+
+        for entry in entries:
+            entry.week_of = week_of
+            key = (entry.label, entry.category)
+            # 1. User-edited row wins outright. Don't insert a duplicate.
+            if key in edited_keys:
+                continue
+            entry_block_ids = {i for i in entry.source_block_ids if i is not None}
+            # If any incoming block id belongs to a user-edited row, skip
+            # \u2014 the user has spoken for that activity.
+            if entry_block_ids & edited_block_ids:
+                continue
+
+            # 2. Match by block-id overlap first (covers re-categorisations).
+            target: TimeEntryRow | None = None
+            for bid in entry_block_ids:
+                if bid in by_block_id:
+                    target = by_block_id[bid]
+                    break
+            # 3. Fall back to (label, category) match.
+            if target is None:
+                target = by_key.get(key)
+
+            if target is not None:
+                # In-place update; the latest scan is truth for hours/impact.
+                # Regression guard: a weak incoming category (Other/Admin)
+                # over a real existing one is almost always Copilot
+                # dropping metadata, not a genuine re-categorisation.
+                existing_strong = (target.category or "") not in _WEAK_CATEGORIES
+                incoming_weak = (entry.category or "") in _WEAK_CATEGORIES
+                if not (existing_strong and incoming_weak):
+                    target.label = entry.label
+                    target.category = entry.category
+                target.duration_hours = entry.duration_hours
+                target.confidence = entry.confidence.value
+                target.impact = entry.impact.value
+                # Union the block-id sets so we don't lose provenance from
+                # earlier scans when an incoming entry only reports a
+                # subset.
+                merged_ids = sorted(_row_block_ids(target) | entry_block_ids)
+                target.source_block_ids = ",".join(str(i) for i in merged_ids)
+                # Union signal-source tags too — provenance is sticky.
+                merged_sources = sorted(
+                    {s for s in (target.sources or "").split(",") if s} | set(entry.sources or [])
+                )
+                target.sources = ",".join(merged_sources)
+                target.daily_hours = json.dumps(entry.daily_hours or {})
+                session.add(target)
+                # Refresh indexes so a later incoming entry doesn't also
+                # match this same row.
+                by_key.pop((target.label, target.category), None)
+                for bid in list(by_block_id):
+                    if by_block_id[bid] is target:
+                        by_block_id.pop(bid, None)
+            else:
+                new_row = _entry_to_row(entry)
+                new_row.id = None
+                session.add(new_row)
         session.commit()
 
 

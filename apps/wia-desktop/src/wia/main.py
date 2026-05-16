@@ -143,7 +143,9 @@ def run() -> None:
         sys.exit(_selfcheck())
 
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    from wia.logging_setup import configure_logging
+
+    configure_logging(settings)
 
     _set_windows_app_user_model_id("WIA.WorkIntelligenceAgent")
 
@@ -212,15 +214,21 @@ def run() -> None:
         js_api=WiaJsApi(),
     )
     icon_path = _resolve_icon_path()
+    # DevTools / right-click "Inspect" are opt-in via the WIA_DEBUG env var
+    # so a normal `uv run wia-desktop` matches the shipped experience.
+    # Enable for a session with:  $env:WIA_DEBUG = "1"; uv run wia-desktop
+    import os as _os
+
+    debug_mode = bool(_os.environ.get("WIA_DEBUG"))
     try:
         if icon_path:
             try:
-                webview.start(icon=icon_path)
+                webview.start(icon=icon_path, debug=debug_mode)
             except TypeError:
                 # Older pywebview without the ``icon`` kwarg.
-                webview.start()
+                webview.start(debug=debug_mode)
         else:
-            webview.start()
+            webview.start(debug=debug_mode)
     finally:
         server.should_exit = True
         server_thread.join(timeout=5)

@@ -35,6 +35,16 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    # Write logs to a rotating file under ``data_dir/logs``. Disable via
+    # ``WIA_LOG_TO_FILE=0`` if running in a sandbox where the data dir is
+    # read-only.
+    log_to_file: bool = True
+    # Number of daily log files to keep (rotation happens at midnight local
+    # time). 30 days is a reasonable trade-off between bug-triage value and
+    # disk usage on a single-user desktop app.
+    log_retention_days: int = 30
+    # Optional override for the log directory. Defaults to ``data_dir/logs``.
+    log_dir_override: Path | None = Field(default=None, validation_alias="WIA_LOG_DIR")
 
     # Optional override for the user data directory. When set (typically via
     # the ``WIA_DATA_DIR`` environment variable), the SQLite database and
@@ -45,6 +55,12 @@ class Settings(BaseSettings):
     @property
     def data_dir(self) -> Path:
         p = self.data_dir_override or Path(_dirs.user_data_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def log_dir(self) -> Path:
+        p = self.log_dir_override or (self.data_dir / "logs")
         p.mkdir(parents=True, exist_ok=True)
         return p
 

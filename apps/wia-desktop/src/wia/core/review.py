@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from wia.core.types import (
     CategoryBreakdown,
+    Impact,
     Insight,
     Review,
     ReviewDelta,
@@ -91,6 +92,7 @@ def _build_review(kind: str, label: str, start: date, end: date) -> Review:
             delta=None,
             categories=[],
             top_labels=[],
+            high_impact_labels=[],
             weekly_trend=[],
             insights=[],
             talking_points=[],
@@ -103,6 +105,7 @@ def _build_review(kind: str, label: str, start: date, end: date) -> Review:
     totals = _totals(period_entries)
     categories = _categories(period_entries, totals.total_hours)
     top_labels = _top_labels(period_entries, limit=5)
+    high_impact_labels = _high_impact_labels(period_entries, limit=10)
     weekly = _weekly_trend(period_entries, start, end)
 
     # Compare against the previous period of equal length.
@@ -111,7 +114,7 @@ def _build_review(kind: str, label: str, start: date, end: date) -> Review:
     delta = _delta(totals, prev_entries) if prev_entries else None
 
     insights = _insights(totals, categories, weekly, delta)
-    talking_points = _talking_points(categories, top_labels, insights)
+    talking_points = _talking_points(categories, top_labels, insights, high_impact_labels)
 
     return Review(
         period_kind=kind,  # type: ignore[arg-type]
@@ -122,6 +125,7 @@ def _build_review(kind: str, label: str, start: date, end: date) -> Review:
         delta=delta,
         categories=categories,
         top_labels=top_labels,
+        high_impact_labels=high_impact_labels,
         weekly_trend=weekly,
         insights=insights,
         talking_points=talking_points,
@@ -276,10 +280,67 @@ def _top_labels(period_entries: list[TimeEntry], *, limit: int) -> list[TopLabel
                 category=category,
                 hours=round(hours, 2),
                 weeks_active=weeks_active,
+                impact=_dominant_impact(items),
+                notes=_collect_notes(items),
             )
         )
     rows.sort(key=lambda r: r.hours, reverse=True)
     return rows[:limit]
+
+
+def _high_impact_labels(period_entries: list[TimeEntry], *, limit: int) -> list[TopLabel]:
+    """Aggregate every entry the user has tagged as :attr:`Impact.HIGH`.
+
+    Used by WIA Review to ensure user-flagged "career moments" always make
+    it into the talking points, even if their raw hours are modest.
+    """
+    high = [e for e in period_entries if e.impact is Impact.HIGH]
+    if not high:
+        return []
+    bucket: dict[tuple[str, str | None], list[TimeEntry]] = defaultdict(list)
+    for e in high:
+        bucket[(e.label, e.category)].append(e)
+    rows: list[TopLabel] = []
+    for (label, category), items in bucket.items():
+        hours = sum(e.duration_hours for e in items)
+        weeks_active = len({e.week_of for e in items if e.week_of})
+        rows.append(
+            TopLabel(
+                label=label,
+                category=category,
+                hours=round(hours, 2),
+                weeks_active=weeks_active,
+                impact=Impact.HIGH,
+                notes=_collect_notes(items),
+            )
+        )
+    rows.sort(key=lambda r: r.hours, reverse=True)
+    return rows[:limit]
+
+
+def _collect_notes(items: list[TimeEntry]) -> list[str]:
+    """Deduplicate and return non-empty notes from ``items`` in insertion order.
+
+    Notes are the user's own narration of what an activity was about — when
+    rolling up Briefing data into a Review, surfacing them next to the
+    aggregated label is the cheapest way to give a manager-facing summary
+    real, hand-curated context.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for e in items:
+        text = (getattr(e, "notes", "") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _dominant_impact(items: list[TimeEntry]) -> Impact:
+    """Pick the highest-priority impact across grouped entries (HIGH > MED > LOW)."""
+    order = {Impact.HIGH: 2, Impact.MEDIUM: 1, Impact.LOW: 0}
+    return max((e.impact for e in items), key=lambda i: order[i], default=Impact.MEDIUM)
 
 
 def _weekly_trend(period_entries: list[TimeEntry], start: date, end: date) -> list[WeeklyPoint]:
@@ -444,11 +505,28 @@ def _talking_points(
     categories: list[CategoryBreakdown],
     top_labels: list[TopLabel],
     insights: list[Insight],
+    high_impact_labels: list[TopLabel] | None = None,
 ) -> list[TalkingPoint]:
     points: list[TalkingPoint] = []
+    seen_achievements: set[str] = set()
 
-    # Achievements — top labels by hours.
+    # Achievements — user-flagged High-impact items first so manual
+    # priorities always make it into the review, then top labels by hours.
+    for label in high_impact_labels or []:
+        text = (
+            f"⭐ {label.label} ({label.hours:.0f}h "
+            f"across {label.weeks_active} week"
+            f"{'s' if label.weeks_active != 1 else ''})."
+        )
+        if label.label in seen_achievements:
+            continue
+        seen_achievements.add(label.label)
+        points.append(TalkingPoint(section="achievements", text=text))
+
     for label in top_labels[:3]:
+        if label.label in seen_achievements:
+            continue
+        seen_achievements.add(label.label)
         points.append(
             TalkingPoint(
                 section="achievements",

@@ -35,6 +35,14 @@ from wia.core.types import ActivityBlock, Confidence, Source
 
 log = logging.getLogger(__name__)
 
+# Microsoft 365 Copilot is non-deterministic and intermittently returns
+# ``{"response": null, "error": "..."}`` for ``ask_work_iq`` — usually
+# transient capacity / routing failures. Retry a couple of times with
+# linear backoff before giving up so an unlucky scan doesn't wipe out
+# good data from the previous run.
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2.0
+
 
 @dataclass
 class WorkIQStatus:
@@ -42,6 +50,16 @@ class WorkIQStatus:
     ready: bool
     version: str | None = None
     message: str | None = None
+
+
+@dataclass
+class WorkIQIdentity:
+    """The signed-in M365 user behind the Work IQ CLI."""
+
+    upn: str
+    display_name: str | None = None
+    tenant_name: str | None = None
+    source: str = "ask_work_iq"  # which MCP tool produced this
 
 
 def _resolve_command(command: str) -> str | None:
@@ -137,6 +155,40 @@ class WorkIQClient:
         self._lock = asyncio.Lock()
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Call an MCP tool, retrying transient Copilot errors.
+
+        Microsoft 365 Copilot intermittently returns
+        ``{"response": null, "error": "..."}`` for ``ask_work_iq``. We
+        retry up to :data:`_RETRY_ATTEMPTS` times with linear backoff
+        before surfacing the failure. The final (failed) payload is
+        returned so :func:`_extract_events` can log it.
+        """
+        last_payload: Any = None
+        for attempt in range(1, _RETRY_ATTEMPTS + 1):
+            payload = await self._call_tool_once(name, arguments)
+            if not _looks_like_transient_error(payload):
+                return payload
+            last_payload = payload
+            if attempt < _RETRY_ATTEMPTS:
+                err = ""
+                if isinstance(payload, dict):
+                    err = str(payload.get("error") or "")[:160]
+                log.info(
+                    "Work IQ %s returned a transient error (attempt %d/%d): %s",
+                    name,
+                    attempt,
+                    _RETRY_ATTEMPTS,
+                    err or "<no message>",
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+        log.warning(
+            "Work IQ %s failed after %d attempts; returning last payload",
+            name,
+            _RETRY_ATTEMPTS,
+        )
+        return last_payload
+
+    async def _call_tool_once(self, name: str, arguments: dict[str, Any]) -> Any:
         """Open a fresh stdio session, call the tool, parse the result.
 
         We open a session per call for V1 simplicity; can be pooled later.
@@ -159,17 +211,103 @@ class WorkIQClient:
                     return text
         return None
 
+    async def _list_tool_names(self) -> list[str]:
+        """Return the names of every tool the Work IQ MCP server exposes.
+
+        Used once at identity-discovery time so we can prefer a typed
+        ``me`` / ``whoami`` tool over the natural-language ``ask_work_iq``
+        when the server provides one. Failures are non-fatal — we just
+        return an empty list and the caller falls back.
+        """
+        try:
+            async with (
+                self._lock,
+                stdio_client(self._params) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                listed = await session.list_tools()
+        except Exception as exc:
+            log.debug("Work IQ list_tools failed: %r", exc)
+            return []
+        names: list[str] = []
+        for t in getattr(listed, "tools", []) or []:
+            n = getattr(t, "name", None)
+            if isinstance(n, str) and n:
+                names.append(n)
+        return names
+
+    async def fetch_user_identity(self) -> WorkIQIdentity | None:
+        """Return the signed-in user's UPN / display name / tenant.
+
+        Strategy:
+
+        1. Probe ``list_tools`` once. If the server exposes a typed
+           identity tool (``me``, ``whoami``, ``identity``, ``user.get``,
+           etc.), call it directly — fewer round-trips, no LLM in the
+           loop.
+        2. Otherwise, fall back to ``ask_work_iq`` with a tight whoami
+           prompt that asks Microsoft 365 Copilot for its own signed-in
+           account. The prompt requests strict JSON so we can parse it.
+
+        Returns ``None`` when both paths fail (e.g. CLI not signed in).
+        Callers should treat absence as a soft signal — never block a
+        user flow on this.
+        """
+        # 1. Try a typed identity tool if one is advertised.
+        candidates = ("me", "whoami", "identity", "user.get", "user_info", "userInfo")
+        try:
+            available = await self._list_tool_names()
+        except Exception as exc:  # pragma: no cover - defensive
+            log.debug("list_tools probe raised: %r", exc)
+            available = []
+        chosen = next((c for c in candidates if c in available), None)
+        if chosen:
+            try:
+                payload = await self._call_tool(chosen, {})
+            except Exception as exc:
+                log.warning("Work IQ %s tool failed: %r", chosen, exc)
+            else:
+                ident = _identity_from_payload(payload, source=chosen)
+                if ident:
+                    return ident
+
+        # 2. Fall back to ask_work_iq with a strict whoami prompt.
+        prompt = (
+            "Who am I? Return ONLY a JSON object, no prose, no markdown fences, "
+            'in this exact shape: {"upn":"<my user principal name>",'
+            '"displayName":"<my full name>","tenantName":"<my organization name>"}. '
+            "Use my actual signed-in Microsoft 365 account. "
+            "If any field is unknown, return an empty string for it."
+        )
+        try:
+            payload = await self._call_tool("ask_work_iq", {"question": prompt})
+        except Exception as exc:
+            log.warning("Work IQ whoami fetch failed: %r", exc)
+            return None
+        return _identity_from_payload(payload, source="ask_work_iq")
+
     async def fetch_calendar_blocks(self, start: date, end: date) -> list[ActivityBlock]:
         """Fetch every calendar event between [start, end] inclusive.
 
-        We deliberately ask for *all* events (past, future, accepted,
-        tentative, declined, all-day, recurring) so the briefing reflects
-        the user's intent — including future days of the current week
-        that haven't happened yet. Work IQ's MCP server only exposes a
-        single natural-language tool (``ask_work_iq``) backed by Microsoft
-        365 Copilot, so we coerce a JSON-shaped answer and parse it.
+        Microsoft 365 Copilot's ``ask_work_iq`` is non-deterministic and
+        \u2014 even with explicit instructions \u2014 frequently drops
+        appointment-style events that have no attendees (or only the user
+        as the sole attendee). To make sure those still show up in the
+        briefing we issue **two** queries per fetch and union the
+        results:
+
+        1. The general "every event in the range" query.
+        2. A narrow follow-up specifically for appointments / self-only
+           blocks / focus time / personal reminders.
+
+        Events that appear in both responses are deduplicated by
+        ``(start, normalised-title)``. When two payloads describe the
+        same event we keep the one whose Outlook ``categories`` /
+        ``categories_display`` is populated so the user's pinned
+        category isn't lost.
         """
-        prompt = (
+        general_prompt = (
             f"List every event on my calendar between {start.isoformat()} 00:00 "
             f"and {end.isoformat()} 23:59 (inclusive of both endpoints). "
             "Include past, current, and future events. Include accepted, "
@@ -177,27 +315,84 @@ class WorkIQClient:
             "every occurrence of recurring events whose instance falls in "
             "this range. Do NOT exclude future events or events I have "
             "not yet attended. "
+            "IMPORTANT: Also include events that have NO attendees \u2014 these are "
+            "personal time-blocks, focus blocks, reminders, and self-organised "
+            "appointments I put on my own calendar. Return them with "
+            "participants:[] (empty array). Do NOT skip them just because "
+            "they have no invitees. "
             "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
-            '"organizer":"email","participants":["email"],"isOnline":true}]}. '
+            '"organizer":"email","participants":["email"],"isOnline":true,'
+            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
+            '"isPrivate":true}]}. '
+            "Always include the event's Outlook categories array (use [] if none). "
+            "Always include the sensitivity field \u2014 it is one of normal, personal, "
+            "private, or confidential. If the event is marked Private in Outlook, "
+            "set sensitivity to 'private' AND set isPrivate to true. Do not omit "
+            "sensitivity even if the value is 'normal'. "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are no events, return {"events":[]}.'
         )
-        try:
-            payload = await self._call_tool("ask_work_iq", {"question": prompt})
-        except Exception as exc:
-            log.warning("Work IQ ask_work_iq failed: %r", exc, exc_info=True)
-            raise
+        # Narrow follow-up: forces Copilot to look specifically at the
+        # appointment-style entries it tends to drop from the general
+        # answer. Same JSON shape so ``_extract_events`` parses both.
+        self_only_prompt = (
+            f"List every calendar entry on my own calendar between "
+            f"{start.isoformat()} 00:00 and {end.isoformat()} 23:59 that has "
+            "either NO other attendees, only me as the attendee, or is an "
+            "Outlook 'appointment' (not a meeting). Include focus time, "
+            "reminders, blocked personal time, and any self-organised "
+            "appointment I created without inviting anyone. Include events "
+            "where I am the only required attendee. Do NOT filter these out "
+            "as 'not meetings' \u2014 they are valid calendar entries I want "
+            "to see. "
+            "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
+            '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
+            '"organizer":"email","participants":["email"],"isOnline":false,'
+            '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
+            '"isPrivate":true}]}. '
+            "Always include the event's Outlook categories array (use [] if none). "
+            "Use ISO 8601 timestamps with timezone offsets. "
+            'If there are none, return {"events":[]}.'
+        )
 
-        events = _extract_events(payload)
+        general_events = await self._ask_for_events(general_prompt, label="general")
+        self_only_events = await self._ask_for_events(self_only_prompt, label="self-only")
+
+        merged = _merge_event_payloads(general_events, self_only_events)
+
         blocks: list[ActivityBlock] = []
-        for ev in events:
+        for ev in merged:
             try:
                 blocks.append(_event_to_block(ev, source=Source.CALENDAR))
             except Exception as exc:
                 log.debug("Skipping malformed event %s: %s", ev, exc)
-        log.info("Work IQ returned %d calendar events for %s..%s", len(blocks), start, end)
+        no_attendee = sum(1 for b in blocks if not b.participants)
+        log.info(
+            "Work IQ returned %d calendar events for %s..%s "
+            "(general=%d, self-only=%d, %d with no attendees)",
+            len(blocks),
+            start,
+            end,
+            len(general_events),
+            len(self_only_events),
+            no_attendee,
+        )
         return blocks
+
+    async def _ask_for_events(self, prompt: str, *, label: str) -> list[dict[str, Any]]:
+        """Run ``ask_work_iq`` and return the parsed events, swallowing failure.
+
+        A failure in one of the two calendar queries should not abort the
+        whole scan \u2014 we still want the other query's events. Errors
+        are logged at WARNING.
+        """
+        try:
+            payload = await self._call_tool("ask_work_iq", {"question": prompt})
+        except Exception as exc:
+            log.warning("Work IQ ask_work_iq (%s) failed: %r", label, exc, exc_info=True)
+            return []
+        return _extract_events(payload)
 
     async def fetch_teams_blocks(self, start: date, end: date) -> list[ActivityBlock]:
         """Fetch Teams chat / call signals between [start, end] inclusive.
@@ -349,6 +544,148 @@ class WorkIQClient:
         )
 
 
+def _identity_from_payload(payload: Any, *, source: str) -> WorkIQIdentity | None:
+    """Parse an identity dict out of a Work IQ tool response.
+
+    Accepts either a direct dict, a ``{"response": "<json>"}`` envelope
+    (the ``ask_work_iq`` shape), or a JSON string with optional ```json
+    fences. Returns ``None`` when no UPN-shaped string is found.
+    """
+    obj = _coerce_identity(payload)
+    if not obj:
+        return None
+    upn = _pick_upn(obj)
+    if not upn:
+        return None
+    display = _pick_str(obj, ("displayName", "display_name", "name"))
+    tenant = _pick_str(obj, ("tenantName", "tenant_name", "organization", "org"))
+    return WorkIQIdentity(
+        upn=upn.strip(),
+        display_name=display.strip() if display else None,
+        tenant_name=tenant.strip() if tenant else None,
+        source=source,
+    )
+
+
+def _coerce_identity(value: Any) -> dict[str, Any] | None:
+    """Pull a plain dict out of nested envelopes / JSON strings."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        # ask_work_iq wraps the real payload as a JSON string under "response".
+        if "response" in value and not any(
+            k in value for k in ("upn", "userPrincipalName", "mail", "email")
+        ):
+            return _coerce_identity(value["response"])
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return _coerce_identity(parsed)
+    return None
+
+
+def _pick_upn(obj: dict[str, Any]) -> str:
+    """Return the first email-shaped value found among the common UPN keys."""
+    for key in ("upn", "userPrincipalName", "mail", "email", "preferred_username"):
+        v = obj.get(key)
+        if isinstance(v, str) and "@" in v:
+            return v
+    return ""
+
+
+def _pick_str(obj: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        v = obj.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return ""
+
+
+def _looks_like_transient_error(payload: Any) -> bool:
+    """Return ``True`` for Copilot's ``{response: null, error: "..."}`` envelope.
+
+    Used by :meth:`WorkIQClient._call_tool` to decide whether to retry.
+    A payload counts as transient when it carries an ``error`` field AND
+    its ``response`` is missing / null / empty.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "error" not in payload:
+        return False
+    resp = payload.get("response")
+    if resp is None:
+        return True
+    return isinstance(resp, str) and not resp.strip()
+
+
+def _event_dedup_key(ev: dict[str, Any]) -> tuple[str, str]:
+    """Stable key for deduplicating events across the two calendar queries.
+
+    We key on ``(start, normalised-title)`` because Copilot occasionally
+    reformats whitespace / casing in titles between calls but never the
+    start timestamp.
+    """
+    start = str(ev.get("start") or "").strip()
+    title = str(ev.get("title") or "").strip().lower()
+    title = " ".join(title.split())
+    return (start, title)
+
+
+def _has_categories(ev: dict[str, Any]) -> bool:
+    """True when this event payload carries Outlook categories.
+
+    Used by the merge to pick the "richer" copy when both calendar
+    queries returned the same event \u2014 the response that retained
+    ``categories`` is the one whose category pinning we want to keep.
+    """
+    cats = ev.get("categories")
+    if isinstance(cats, list) and any(isinstance(c, str) and c.strip() for c in cats):
+        return True
+    display = ev.get("categories_display") or ev.get("categoriesDisplay")
+    return bool(isinstance(display, str) and display.strip())
+
+
+def _merge_event_payloads(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Union two ``ask_work_iq`` event lists, keeping the richer copy on overlap.
+
+    ``primary`` events come first in the output; events from
+    ``secondary`` that aren't already keyed in ``primary`` are appended.
+    When both lists describe the same event (same dedup key) we keep the
+    one with populated Outlook categories so a category-stripped copy
+    can't shadow a category-bearing one.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+    for ev in primary:
+        if not isinstance(ev, dict):
+            continue
+        key = _event_dedup_key(ev)
+        merged[key] = ev
+        order.append(key)
+    for ev in secondary:
+        if not isinstance(ev, dict):
+            continue
+        key = _event_dedup_key(ev)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = ev
+            order.append(key)
+        elif _has_categories(ev) and not _has_categories(existing):
+            merged[key] = ev
+    return [merged[k] for k in order]
+
+
 def _extract_events(payload: Any) -> list[dict[str, Any]]:
     """Normalise an ``ask_work_iq`` response to a list of event dicts.
 
@@ -416,6 +753,27 @@ def _event_to_block(
     attendees = ev.get("attendees") or ev.get("participants") or []
     if attendees and isinstance(attendees[0], dict):
         attendees = [a.get("email") or a.get("address") or "" for a in attendees]
+    metadata: dict[str, str] = {"id": str(ev.get("id", ""))}
+    # Outlook categories — stored as a ``|``-joined lowercase string so the
+    # orchestrator can do a cheap substring/membership check without re-
+    # parsing JSON. Empty when the event has no categories.
+    categories = ev.get("categories") or []
+    if isinstance(categories, str):
+        categories = [categories]
+    cat_norm = [str(c).strip() for c in categories if str(c).strip()]
+    if cat_norm:
+        metadata["categories"] = "|".join(c.lower() for c in cat_norm)
+        metadata["categories_display"] = ", ".join(cat_norm)
+    # Sensitivity (Outlook): normal | personal | private | confidential.
+    # Some sources may provide ``isPrivate`` instead.
+    sensitivity = ev.get("sensitivity")
+    is_private_flag = ev.get("isPrivate") is True or ev.get("is_private") is True
+    if not sensitivity and is_private_flag:
+        sensitivity = "private"
+    if isinstance(sensitivity, str) and sensitivity.strip():
+        metadata["sensitivity"] = sensitivity.strip().lower()
+    if is_private_flag:
+        metadata["is_private"] = "true"
     return ActivityBlock(
         start=start,
         end=end,
@@ -423,7 +781,7 @@ def _event_to_block(
         participants=[a for a in attendees if a],
         source=source,
         confidence=confidence,
-        metadata={"id": str(ev.get("id", ""))},
+        metadata=metadata,
     )
 
 

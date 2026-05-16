@@ -11,9 +11,10 @@
     <style>
       html, body { margin: 0; background: #f8fafc; color: #0f172a; }
       @media (prefers-color-scheme: dark) {
-        html:not(.light), body:not(.light) { background: #020617; color: #f1f5f9; }
+        html:not(.light), html:not(.light) body { background: #020617; color: #f1f5f9; }
       }
       html.dark, html.dark body { background: #020617; color: #f1f5f9; }
+      html.light, html.light body { background: #f8fafc; color: #0f172a; }
       [x-cloak] { display: none !important; }
       #wia-splash {
         position: fixed; inset: 0; z-index: 9999;
@@ -47,20 +48,25 @@
         const stored = window.localStorage && window.localStorage.getItem('wia-theme');
         if (stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
           document.documentElement.classList.add('dark');
+        } else {
+          // Mark light explicitly so the inline boot CSS rule
+          // `html:not(.light)` (under prefers-color-scheme: dark) doesn't
+          // force body color to white before Alpine hydrates.
+          document.documentElement.classList.add('light');
         }
       } catch (e) { /* non-fatal */ }
     </script>
     <script src="/static/icons.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
-  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100" x-data="wia()" x-init="init()">
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100" x-data="wia()" x-init="init()" @keydown.escape.window="if (prefsOpen) closePrefs(); else if (scansOpen) closeScans()">
     <!-- Splash: removed by Alpine after the first briefing fetch resolves. -->
     <div id="wia-splash" x-show="bootingBriefing()" x-transition.opacity.duration.250ms>
       <img src="/static/logo.png" alt="WIA" />
       <div class="wia-splash-title">Loading WIA…</div>
     </div>
     <header class="border-b bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+      <div class="flex items-center justify-between px-6 py-4">
         <div class="flex items-center gap-3">
           <img src="/static/logo.png" alt="WIA logo" class="h-8 w-8 rounded" />
           <div>
@@ -85,24 +91,73 @@
           </nav>
         </div>
         <div class="flex items-center gap-3 text-sm">
-          <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
-            <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('sun', 'h-3.5 w-3.5')"></span><span>Light</span></button>
-            <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('moon', 'h-3.5 w-3.5')"></span><span>Dark</span></button>
-            <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
+          <!-- Work IQ status pill / Enable button. Placed to the LEFT of the
+               theme picker so its late arrival (or width changes when the
+               UPN tag fills in) grows leftward into empty header space
+               instead of pushing the theme picker around. -->
+          <div class="inline-flex min-h-[28px] items-center justify-end">
+            <template x-if="!workiqChecked">
+              <span class="inline-flex h-6 w-32 items-center justify-end" aria-hidden="true">
+                <span class="h-5 w-28 rounded-full wia-skeleton"></span>
+              </span>
+            </template>
+            <template x-if="workiqChecked && workiq.ready">
+              <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span>
+                <span>Work IQ connected</span>
+                <template x-if="identity.upn">
+                  <span class="ml-1 inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full bg-emerald-200/70 px-2 py-0.5 text-[11px] font-normal text-emerald-800 dark:bg-emerald-800/50 dark:text-emerald-100" :title="identity.display_name ? identity.display_name + ' · ' + identity.upn : identity.upn">
+                    <span class="truncate" x-text="identity.upn"></span>
+                  </span>
+                </template>
+              </span>
+            </template>
+            <template x-if="workiqChecked && !workiq.ready">
+              <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
+                <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+              </button>
+            </template>
           </div>
-          <template x-if="workiq.ready">
-            <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"><span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Work IQ connected</span></span>
-          </template>
-          <template x-if="!workiq.ready">
-            <button @click="enableWorkIQ()" :disabled="enabling" class="rounded bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50">
-              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
-            </button>
-          </template>
+          <!-- Global Scans button: opens a right-side slide-over panel that
+               unifies schedule, last-scan status, running-scan banners,
+               scan history, and Review's missing-weeks workflow. -->
+          <button
+            type="button"
+            @click="openScans()"
+            class="relative inline-flex items-center gap-1 rounded-lg border bg-slate-100 px-2.5 py-1 text-xs hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+            aria-label="Open scans panel"
+            title="Scans"
+          >
+            <span x-html="icon('queue-list', 'h-3.5 w-3.5')"></span>
+            <span>Scans</span>
+            <span
+              x-show="hasActiveScan()"
+              x-cloak
+              class="absolute -right-0.5 -top-0.5 inline-flex h-2.5 w-2.5"
+              aria-hidden="true"
+            >
+              <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75"></span>
+              <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-500"></span>
+            </span>
+          </button>
+          <!-- Global Preferences button: opens a right-side slide-over for
+               scan filters (exclusions, high-impact keywords, organization).
+               Lives in the header so Briefing and Review can both link to it. -->
+          <button
+            type="button"
+            @click="openPrefs()"
+            class="inline-flex items-center gap-1 rounded-lg border bg-slate-100 px-2.5 py-1 text-xs hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+            aria-label="Open preferences panel"
+            title="Preferences"
+          >
+            <span x-html="icon('cog-6-tooth', 'h-3.5 w-3.5')"></span>
+            <span>Preferences</span>
+          </button>
         </div>
       </div>
     </header>
 
-    <main class="mx-auto max-w-7xl px-6 py-6 space-y-6">
+    <main class="px-6 py-6 space-y-6">
       <!-- Briefing view ------------------------------------------------- -->
       <div x-show="view === 'briefing'" class="space-y-6">
       <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" :aria-busy="(loading || isScanningCurrent() || bootingBriefing()) ? 'true' : 'false'">
@@ -122,7 +177,7 @@
                 <span class="inline-block h-4 w-72 align-middle wia-skeleton"></span>
               </template>
               <template x-if="briefing && hasEntries() && !isScanningCurrent()">
-                <span>You logged <strong x-text="briefing.totals.total_hours.toFixed(1)"></strong> hours across <span x-text="briefing.entries.length"></span> activities.</span>
+                <span>You logged <strong x-text="liveTotals().total_hours.toFixed(1)"></strong> hours across <span x-text="briefing.entries.length"></span> activities.</span>
               </template>
               <template x-if="briefing && !hasEntries() && !loading && !isScanningCurrent()">
                 <span class="text-slate-500 dark:text-slate-400">No activity yet for this week.</span>
@@ -132,6 +187,12 @@
               </template>
               <template x-if="loading && !isScanningCurrent() && !bootingBriefing()">
                 <span class="text-indigo-600 dark:text-indigo-400">Loading…</span>
+              </template>
+              <template x-if="scanningBriefing && !isScanningCurrent()">
+                <span class="text-indigo-600 dark:text-indigo-400">
+                  · background scan on week of <strong x-text="scanningWeekIso"></strong>
+                  <button type="button" class="ml-1 underline" @click="openScans('status')">view</button>
+                </span>
               </template>
               <template x-if="schedule.last_scan_at && !bootingBriefing() && !loading && !isScanningCurrent()">
                 <span class="ml-2 text-xs text-slate-500 dark:text-slate-400">· last scan <span x-text="timeAgo(schedule.last_scan_at)"></span></span>
@@ -217,44 +278,42 @@
           </div>
         </div>
 
-        <!-- Excluded keywords ----------------------------------------------- -->
-        <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">Exclude keywords:</span>
-          <div class="flex flex-wrap items-center gap-1">
-            <template x-for="kw in (prefs.excluded_keywords || [])" :key="'kw-' + kw">
-              <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                <span x-text="kw"></span>
-                <button
-                  type="button"
-                  class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
-                  @click="removeExcludedKeyword(kw)"
-                  :aria-label="'Remove ' + kw"
-                  title="Remove"
-                >&times;</button>
-              </span>
-            </template>
-            <template x-if="!(prefs.excluded_keywords && prefs.excluded_keywords.length)">
-              <span class="text-slate-400 dark:text-slate-500">None</span>
-            </template>
+        <!-- Scan filters summary (full controls live in Preferences slide-over) -->
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 dark:border-slate-700">
+          <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+            <span class="font-medium text-slate-600 dark:text-slate-300">Scan filters:</span>
+            <span x-show="(prefs.excluded_keywords || []).length"
+                  x-text="prefs.excluded_keywords.length + ' excl. kw'"></span>
+            <span x-show="(prefs.excluded_calendar_categories || []).length"
+                  x-text="'· ' + prefs.excluded_calendar_categories.length + ' excl. cat'"></span>
+            <span x-show="(prefs.high_impact_keywords || []).length"
+                  x-text="'· ' + prefs.high_impact_keywords.length + ' high-impact'"></span>
+            <span x-show="(prefs.high_impact_calendar_categories || []).length"
+                  x-text="'· ' + prefs.high_impact_calendar_categories.length + ' high-impact cat'"></span>
+            <span x-show="(prefs.umbrella_calendar_categories || []).length"
+                  x-text="'· ' + prefs.umbrella_calendar_categories.length + ' umbrella cat'"></span>
+            <span x-show="(prefs.preserve_calendar_categories || []).length"
+                  x-text="'· ' + prefs.preserve_calendar_categories.length + ' preserve cat'"></span>
+            <span x-show="prefs.exclude_private_meetings">· private excluded</span>
+            <span x-show="prefs.organization_label" x-text="'· org: ' + prefs.organization_label"></span>
+            <span x-show="!(prefs.excluded_keywords || []).length
+                        && !(prefs.excluded_calendar_categories || []).length
+                        && !(prefs.high_impact_keywords || []).length
+                        && !(prefs.high_impact_calendar_categories || []).length
+                        && !(prefs.umbrella_calendar_categories || []).length
+                        && !(prefs.preserve_calendar_categories || []).length
+                        && !prefs.exclude_private_meetings
+                        && !prefs.organization_label"
+                  class="italic">none configured</span>
           </div>
-          <form class="inline-flex items-center gap-1" @submit.prevent="addExcludedKeyword()">
-            <input
-              type="text"
-              x-model="newExcludedKeyword"
-              placeholder="Type keyword..."
-              maxlength="100"
-              class="w-40 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-              :aria-label="'Add excluded keyword'"
-            />
-            <button
-              type="submit"
-              :disabled="!newExcludedKeyword || !newExcludedKeyword.trim()"
-              class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
-            >Add</button>
-          </form>
-          <span x-show="(prefs.excluded_keywords || []).length" class="text-slate-400 dark:text-slate-500">
-            · applies to the next scan
-          </span>
+          <button
+            type="button"
+            @click="openPrefs('exclude')"
+            class="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <span x-html="icon('cog-6-tooth', 'h-3 w-3')"></span>
+            <span>Edit in Preferences</span>
+          </button>
         </div>
         <div x-show="isScanningCurrent()" x-cloak class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
           <span class="font-medium text-indigo-600 dark:text-indigo-400">Scanning:</span>
@@ -267,26 +326,12 @@
           <span class="text-slate-500 dark:text-slate-400">· Microsoft Copilot can take 20–60s to answer</span>
         </div>
 
-        <!-- Background scan banner: shown when a scan is running for a week
-             other than the one the user is currently viewing. -->
-        <div
-          x-show="scanningBriefing && !isScanningCurrent()"
-          x-cloak
-          class="mt-3 flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"
-        >
-          <span class="wia-pulse-dot"></span>
-          <span>
-            Scanning week of <strong x-text="scanningWeekIso"></strong> in the background…
-            <button class="ml-1 underline" @click="goToScanningWeek()">jump to it</button>
-          </span>
-        </div>
-
         <template x-if="briefing">
           <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 transition-opacity" :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
-            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Meetings</div><div class="text-lg font-semibold" x-text="briefing.totals.meetings_hours + 'h'"></div></div>
-            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Focus</div><div class="text-lg font-semibold" x-text="briefing.totals.focus_hours + 'h'"></div></div>
-            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Collaboration</div><div class="text-lg font-semibold" x-text="briefing.totals.collaboration_hours + 'h'"></div></div>
-            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Total</div><div class="text-lg font-semibold" x-text="briefing.totals.total_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Meetings</div><div class="text-lg font-semibold" x-text="liveTotals().meetings_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Focus</div><div class="text-lg font-semibold" x-text="liveTotals().focus_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Collaboration</div><div class="text-lg font-semibold" x-text="liveTotals().collaboration_hours + 'h'"></div></div>
+            <div class="rounded border p-3 dark:border-slate-700"><div class="text-xs text-slate-500 dark:text-slate-400">Total</div><div class="text-lg font-semibold" x-text="liveTotals().total_hours + 'h'"></div></div>
           </div>
         </template>
         <template x-if="bootingBriefing()">
@@ -301,194 +346,10 @@
         </template>
       </section>
 
-      <section class="rounded-lg border bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <div>
-            <div class="text-slate-500 dark:text-slate-400">Last scan</div>
-            <div class="font-medium">
-              <span x-text="schedule.last_scan_at ? formatDateTime(schedule.last_scan_at) : 'never'"></span>
-              <template x-if="schedule.last_scan_week_of">
-                <span class="ml-1 text-slate-500 dark:text-slate-400" x-text="'· week of ' + schedule.last_scan_week_of"></span>
-              </template>
-              <template x-if="schedule.last_scan_trigger">
-                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300" x-text="schedule.last_scan_trigger"></span>
-              </template>
-              <template x-if="schedule.last_scan_status">
-                <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs dark:bg-slate-800" x-text="schedule.last_scan_status"></span>
-              </template>
-            </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <label class="text-slate-500 dark:text-slate-400">Auto-scan</label>
-            <select x-model.number="schedule.interval_minutes" @change="setSchedule(schedule.interval_minutes)" class="rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800">
-              <option :value="0">Manual only</option>
-              <option :value="60">Every 1 hour</option>
-              <option :value="120">Every 2 hours</option>
-              <option :value="240">Every 4 hours</option>
-              <option :value="480">Every 8 hours</option>
-              <option :value="1440">Once a day</option>
-            </select>
-          </div>
-        </div>
-        <div class="mt-3 border-t pt-3 dark:border-slate-700">
-          <button @click="toggleHistory()" class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
-            <span x-html="icon(historyOpen ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
-            <span>Scan history</span>
-          </button>
-          <div x-show="historyOpen" x-cloak class="mt-3">
-            <!-- Toolbar: range filter + view toggle -->
-            <div class="mb-2 flex flex-wrap items-center gap-2 text-xs">
-              <span class="text-slate-500 dark:text-slate-400">Range:</span>
-              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History range">
-                <template x-for="r in ['7d','30d','all']" :key="r">
-                  <button
-                    type="button"
-                    @click="setHistoryRange(r)"
-                    :class="historyRange === r ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
-                    class="rounded-md px-2 py-0.5 text-xs uppercase"
-                    x-text="r === 'all' ? 'All' : r"
-                  ></button>
-                </template>
-              </div>
-              <span class="ml-2 text-slate-500 dark:text-slate-400">View:</span>
-              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History view">
-                <button type="button" @click="setHistoryView('flat')" :class="historyView === 'flat' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">All scans</button>
-                <button type="button" @click="setHistoryView('weekly')" :class="historyView === 'weekly' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">Group by week</button>
-              </div>
-            </div>
-
-            <template x-if="historyLoading">
-              <div class="text-xs text-slate-500 dark:text-slate-400">Loading…</div>
-            </template>
-            <template x-if="!historyLoading && history.length === 0">
-              <div class="text-xs text-slate-500 dark:text-slate-400">No scans recorded yet.</div>
-            </template>
-
-            <!-- Flat scrollable table -->
-            <template x-if="!historyLoading && history.length > 0 && historyView === 'flat'">
-              <div class="max-h-56 overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
-                <table class="w-full min-w-[640px] text-left text-xs">
-                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
-                    <tr>
-                      <th class="py-1 pl-2 pr-3 font-medium">Ran at</th>
-                      <th class="py-1 pr-3 font-medium">Week</th>
-                      <th class="py-1 pr-3 font-medium">Trigger</th>
-                      <th class="py-1 pr-3 font-medium">Status</th>
-                      <th class="py-1 pr-3 font-medium">Entries</th>
-                      <th class="py-1 pr-3 font-medium">Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <template x-for="row in filteredHistory()" :key="row.id">
-                      <tr class="border-t dark:border-slate-700">
-                        <td class="py-1 pl-2 pr-3" x-text="formatDateTime(row.ran_at)"></td>
-                        <td class="py-1 pr-3" x-text="row.week_of"></td>
-                        <td class="py-1 pr-3 uppercase tracking-wide text-slate-500 dark:text-slate-400" x-text="row.trigger"></td>
-                        <td class="py-1 pr-3" x-text="row.status"></td>
-                        <td class="py-1 pr-3" x-text="row.entry_count"></td>
-                        <td class="py-1 pr-3" x-text="formatDuration(row.duration_ms)"></td>
-                      </tr>
-                    </template>
-                    <template x-if="filteredHistory().length === 0">
-                      <tr><td colspan="6" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
-                    </template>
-                  </tbody>
-                </table>
-              </div>
-            </template>
-
-            <!-- Grouped by week -->
-            <template x-if="!historyLoading && history.length > 0 && historyView === 'weekly'">
-              <div class="max-h-56 overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
-                <table class="w-full min-w-[640px] text-left text-xs">
-                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
-                    <tr>
-                      <th class="w-6"></th>
-                      <th class="py-1 pr-3 font-medium">Week</th>
-                      <th class="py-1 pr-3 font-medium">Scans</th>
-                      <th class="py-1 pr-3 font-medium">Last run</th>
-                      <th class="py-1 pr-3 font-medium">Last status</th>
-                      <th class="py-1 pr-3 font-medium">Last entries</th>
-                      <th class="py-1 pr-3 font-medium">Max duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <template x-for="g in groupedHistory()" :key="g.week_of">
-                      <template x-for="row in [{kind:'group'}, ...(historyExpandedWeeks[g.week_of] ? g.scans.map(s => ({kind:'sub', scan:s})) : [])]" :key="g.week_of + ':' + (row.kind === 'group' ? 'g' : row.scan.id)">
-                        <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40 font-medium' : 'border-t border-dashed dark:border-slate-700/60'">
-                          <template x-if="row.kind === 'group'">
-                            <td class="text-center align-middle">
-                              <button @click="toggleHistoryWeek(g.week_of)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(historyExpandedWeeks[g.week_of] ? 'Collapse ' : 'Expand ') + g.week_of">
-                                <span x-html="icon(historyExpandedWeeks[g.week_of] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
-                              </button>
-                            </td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td></td>
-                          </template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="g.week_of"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td class="py-1 pr-3 text-slate-500 dark:text-slate-400" x-text="'· ' + (row.scan.trigger || '').toUpperCase()"></td>
-                          </template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="g.scans.length"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'"><td></td></template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="formatDateTime(g.last_ran_at)"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td class="py-1 pr-3" x-text="formatDateTime(row.scan.ran_at)"></td>
-                          </template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="g.last_status"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td class="py-1 pr-3" x-text="row.scan.status"></td>
-                          </template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="g.last_entry_count"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td class="py-1 pr-3" x-text="row.scan.entry_count"></td>
-                          </template>
-                          <template x-if="row.kind === 'group'">
-                            <td class="py-1 pr-3" x-text="formatDuration(g.max_duration_ms)"></td>
-                          </template>
-                          <template x-if="row.kind === 'sub'">
-                            <td class="py-1 pr-3" x-text="formatDuration(row.scan.duration_ms)"></td>
-                          </template>
-                        </tr>
-                      </template>
-                    </template>
-                    <template x-if="groupedHistory().length === 0">
-                      <tr><td colspan="7" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
-                    </template>
-                  </tbody>
-                </table>
-              </div>
-            </template>
-
-            <!-- Caption + Load more -->
-            <div x-show="!historyLoading && history.length > 0" class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span x-text="historyCaption()"></span>
-              <button
-                x-show="historyView === 'flat' && canLoadMoreHistory()"
-                @click="loadMoreHistory()"
-                :disabled="historyLoading"
-                class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
-              >Load more</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section x-show="briefing?.top_work_areas?.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 transition-opacity" :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
+      <section x-show="liveTopWorkAreas().length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 transition-opacity" :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
         <h3 class="font-semibold">Top work areas</h3>
         <ul class="mt-3 space-y-1 text-sm">
-          <template x-for="area in briefing.top_work_areas" :key="area.label">
+          <template x-for="area in liveTopWorkAreas()" :key="area.label">
             <li class="flex justify-between border-b py-1.5 dark:border-slate-700"><span x-text="area.label"></span><span class="font-medium" x-text="area.hours + 'h'"></span></li>
           </template>
         </ul>
@@ -501,6 +362,15 @@
             <button @click="expandAll()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400" x-text="allExpanded() ? 'Collapse all' : 'Expand all'"></button>
           </div>
           <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              @click="openManualForm()"
+              :disabled="manualFormOpen"
+              class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              title="Add a manual entry for work not picked up by the scan"
+            >
+              <span x-html="icon('plus', 'h-4 w-4')"></span><span>Add manual entry</span>
+            </button>
             <button @click="copyTable()" class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
               <template x-if="copied">
                 <span class="inline-flex items-center gap-1"><span x-html="icon('check', 'h-4 w-4')"></span><span>Copied</span></span>
@@ -513,140 +383,219 @@
           </div>
         </div>
 
-        <div class="mt-3 overflow-x-auto">
-          <table class="w-full text-sm">
+        <!-- Table: rendered only when there are entries to show. The
+             empty / skeleton / state-aware cards live in a sibling block
+             below so they get the full section width and aren't squeezed
+             by the table's narrow Category-indent column. -->
+        <div x-show="!!(briefing?.entries?.length)" class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[1024px] table-fixed text-sm">
+            <colgroup>
+              <col class="w-8"><!-- chevron -->
+              <col class="w-8"><!-- category indent (group rows colspan into label) -->
+              <col style="width: 100%"><!-- label (absorbs all freed width) -->
+              <col class="w-[76px]"><col class="w-[76px]"><col class="w-[76px]"><col class="w-[76px]"><col class="w-[76px]"><col class="w-[76px]"><col class="w-[76px]"><!-- 7 days -->
+              <col class="w-[64px]"><!-- total -->
+              <col class="w-[80px]"><!-- impact -->
+              <col class="w-12"><!-- actions -->
+            </colgroup>
             <thead class="text-left text-slate-500 dark:text-slate-400">
               <tr class="border-b dark:border-slate-700">
-                <th class="w-8"></th>
-                <th class="py-2 pr-3">Category</th>
-                <th class="pr-3">Label</th>
-                <template x-for="(label, i) in dayLabels" :key="i">
-                  <th class="px-2 text-right">
-                    <span x-text="label"></span><br>
+                <th></th>
+                <th class="py-2 pr-3" colspan="2">
+                  <button
+                    type="button"
+                    @click="setGroupSort('category')"
+                    class="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                    :title="groupSort.key === 'category' ? ('Sorted by category (' + (groupSort.dir === 'asc' ? 'A → Z' : 'Z → A') + '). Click to toggle.') : 'Sort by category'"
+                    :aria-sort="groupSort.key === 'category' ? (groupSort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+                  >
+                    <span>Category / Label</span>
+                    <span class="text-[10px]" x-text="groupSortIndicator('category')"></span>
+                  </button>
+                </th>
+                <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
+                  <th class="px-1 text-right">
+                    <span x-text="dayLabel(i)"></span><br>
                     <span class="text-[10px] font-normal" x-text="dayDate(i)"></span>
                   </th>
                 </template>
-                <th class="px-3 text-right">Total</th>
-                <th class="px-3 text-center">Conf.</th>
-                <th class="w-12"></th>
+                <th class="px-3 text-right">
+                  <button
+                    type="button"
+                    @click="setGroupSort('total')"
+                    class="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                    :title="groupSort.key === 'total' ? ('Sorted by total (' + (groupSort.dir === 'desc' ? 'high → low' : 'low → high') + '). Click to toggle.') : 'Sort by total hours'"
+                    :aria-sort="groupSort.key === 'total' ? (groupSort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+                  >
+                    <span>Total</span>
+                    <span class="text-[10px]" x-text="groupSortIndicator('total')"></span>
+                  </button>
+                </th>
+                <th class="px-3 text-center">Impact</th>
+                <th></th>
               </tr>
             </thead>
             <tbody :class="isScanningCurrent() ? 'animate-pulse opacity-70' : ''">
-              <template x-for="group in groupedEntries()" :key="group.category">
-                <template x-for="row in groupRows(group)" :key="row.key">
-                  <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : '')">
+              <!-- Flat row iteration (group summary + sub-rows + notes
+                   rows interleaved) — single x-for to avoid Alpine's
+                   nested-x-for DOM reconciliation bug. row.group carries
+                   the parent group for the cells that need it. -->
+              <template x-for="row in flatTableRows()" :key="row.key">
+                <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 font-medium' : (row.kind === 'sub' ? 'border-t border-dashed dark:border-slate-700/60' : (row.kind === 'notes' ? 'bg-slate-50/60 dark:bg-slate-800/30' : ''))">
+                    <!-- Notes row: spans the whole width with a textarea. -->
+                    <template x-if="row.kind === 'notes'">
+                      <td :colspan="14" class="px-3 pb-3 pt-1">
+                        <label class="block text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">Notes</label>
+                        <textarea
+                          x-model="row.entry.notes"
+                          @blur="saveNotes(row.entry)"
+                          rows="2"
+                          placeholder="Context for this entry — what you actually did, outcomes, follow-ups. Surfaces in Review."
+                          class="mt-1 w-full resize-y rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900"
+                        ></textarea>
+                      </td>
+                    </template>
                     <!-- Chevron column -->
-                    <td class="text-center align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <button @click="toggleGroup(group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[group.category] ? 'Collapse ' : 'Expand ') + group.category">
-                          <span x-html="icon(expanded[group.category] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
-                        </button>
-                      </template>
-                    </td>
-                    <!-- Category -->
-                    <td class="py-2 pr-3 align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <span x-text="group.category"></span>
-                      </template>
-                      <template x-if="row.kind === 'sub'">
-                        <span></span>
-                      </template>
-                    </td>
-                    <!-- Label -->
-                    <td class="pr-3 align-middle">
-                      <template x-if="row.kind === 'group'">
-                        <span class="text-xs text-slate-500 dark:text-slate-400" x-text="group.entries.length + (group.entries.length === 1 ? ' item' : ' items')"></span>
-                      </template>
-                      <template x-if="row.kind === 'sub'">
-                        <input class="w-full bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
-                      </template>
-                    </td>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="text-center align-middle">
+                        <template x-if="row.kind === 'group'">
+                          <button @click="toggleGroup(row.group.category)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(expanded[row.group.category] ? 'Collapse ' : 'Expand ') + row.group.category">
+                            <span x-html="icon(expanded[row.group.category] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+                          </button>
+                        </template>
+                      </td>
+                    </template>
+                    <!-- Category / Label -->
+                    <!-- Group rows: span both cols, show category name + item count.
+                         Sub rows: narrow indent cell + label input. -->
+                    <template x-if="row.kind === 'group'">
+                      <td class="py-2 pr-3 align-middle" colspan="2">
+                        <span class="font-medium" x-text="row.group.category"></span>
+                        <span class="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400" x-text="row.group.entries.length + (row.group.entries.length === 1 ? ' item' : ' items')"></span>
+                      </td>
+                    </template>
+                    <template x-if="row.kind === 'sub'">
+                      <td class="align-middle"></td>
+                    </template>
+                    <template x-if="row.kind === 'sub'">
+                      <td class="pr-3 align-middle">
+                        <div class="flex flex-nowrap items-center gap-1.5">
+                          <input class="min-w-0 flex-1 bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
+                          <template x-for="src in (row.entry.sources || [])" :key="'src-' + row.entry.id + '-' + src">
+                            <span
+                              :class="sourceBadgeClass(src)"
+                              :title="sourceBadgeTitle(src)"
+                              :aria-label="sourceBadgeTitle(src)"
+                              class="inline-flex shrink-0 items-center justify-center rounded-full p-1"
+                            >
+                              <span x-html="icon(sourceBadgeIcon(src), 'h-3 w-3')"></span>
+                            </span>
+                          </template>
+                          <template x-if="(row.entry.notes || '').trim()">
+                            <span title="Has notes" class="shrink-0 text-amber-500" x-html="icon('chat-bubble-left-right', 'h-3.5 w-3.5')"></span>
+                          </template>
+                        </div>
+                      </td>
+                    </template>
                     <!-- Day cells -->
-                    <template x-for="(label, i) in dayLabels" :key="i">
-                      <td class="px-2 text-right tabular-nums" x-text="row.kind === 'group' ? hhmm(group.daily[dayIso(i)] || 0) : hoursForDay(row.entry, i)"></td>
+                    <template x-if="row.kind !== 'notes'">
+                      <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
+                        <td class="px-1 text-right tabular-nums">
+                          <template x-if="row.kind === 'group'">
+                            <span x-text="hhmm(row.group.daily[dayIso(i)] || 0)"></span>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <!-- Inline stepper: opacity-0 chevrons keep
+                                 their layout space at rest, so cell width
+                                 is constant (no jitter) and the table
+                                 sizing is stable across hover. -->
+                            <span class="group/cell inline-flex items-center justify-end gap-1 leading-none">
+                              <button
+                                type="button"
+                                tabindex="-1"
+                                @click="adjustEntryDaily(row.entry, i, ($event.shiftKey ? -1 : -0.25))"
+                                :disabled="!((row.entry.daily_hours || {})[dayIso(i)] > 0)"
+                                :aria-label="'Decrease ' + dayLabel(i) + ' hours'"
+                                title="Subtract 15 min (Shift = 1 h)"
+                                class="text-slate-400 opacity-0 transition-opacity hover:text-slate-700 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 disabled:pointer-events-none disabled:opacity-0 dark:hover:text-slate-200"
+                              ><span x-html="icon('chevron-down', 'h-3.5 w-3.5')"></span></button>
+                              <span
+                                :class="((row.entry.daily_hours || {})[dayIso(i)] || 0) === 0 ? 'text-slate-300 dark:text-slate-600' : ''"
+                                x-text="((row.entry.daily_hours || {})[dayIso(i)] || 0) > 0 ? hhmm((row.entry.daily_hours || {})[dayIso(i)]) : '—'"
+                              ></span>
+                              <button
+                                type="button"
+                                tabindex="-1"
+                                @click="adjustEntryDaily(row.entry, i, ($event.shiftKey ? 1 : 0.25))"
+                                :aria-label="'Increase ' + dayLabel(i) + ' hours'"
+                                title="Add 15 min (Shift = 1 h)"
+                                class="text-slate-400 opacity-0 transition-opacity hover:text-slate-700 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 dark:hover:text-slate-200"
+                              ><span x-html="icon('chevron-up', 'h-3.5 w-3.5')"></span></button>
+                            </span>
+                          </template>
+                        </td>
+                      </template>
                     </template>
                     <!-- Total -->
-                    <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(group.total) : hhmm(row.entry.duration_hours)"></td>
-                    <!-- Confidence -->
-                    <td class="px-3 text-center">
-                      <template x-if="row.kind === 'sub'">
-                        <span class="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800" x-text="row.entry.confidence"></span>
-                      </template>
-                    </td>
-                    <!-- Delete -->
-                    <td class="text-center">
-                      <template x-if="row.kind === 'sub'">
-                        <button class="text-red-600 hover:text-red-700" :aria-label="'Delete entry ' + (row.entry.label || '')" @click="deleteEntry(row.entry)"><span x-html="icon('x-mark', 'h-4 w-4')"></span></button>
-                      </template>
-                    </td>
-                  </tr>
-                </template>
-              </template>
-              <template x-if="!briefing?.entries?.length">
-                <tr>
-                  <td :colspan="5 + dayLabels.length" class="py-0">
-                    <!-- Skeleton rows during the very first paint -->
-                    <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
-                      <div class="space-y-2 py-4">
-                        <template x-for="n in [1,2,3,4,5]" :key="'rowskel-' + n">
-                          <div class="flex items-center gap-3 px-1">
-                            <div class="h-4 w-24 wia-skeleton"></div>
-                            <div class="h-4 flex-1 wia-skeleton"></div>
-                            <div class="h-4 w-12 wia-skeleton"></div>
-                          </div>
-                        </template>
-                      </div>
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(row.group.total) : hhmm(entryDisplayTotal(row.entry))"></td>
                     </template>
-
-                    <!-- State-aware empty card -->
-                    <template x-if="briefing && !loading && !isScanningCurrent()">
-                      <div class="py-8 text-center">
-                        <!-- A. Work IQ not connected -->
-                        <template x-if="!workiq.ready">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:link', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">Connect Work IQ to scan your week</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              WIA reads your calendar, Teams, and email through the Microsoft Work IQ CLI.
-                              You'll be prompted to sign in once.
-                            </p>
-                            <button @click="enableWorkIQ()" :disabled="enabling" class="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
-                              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
-                            </button>
+                    <!-- Impact -->
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="px-3 text-center">
+                        <template x-if="row.kind === 'group'">
+                          <span class="text-[11px] text-slate-500 dark:text-slate-400" x-text="groupImpactSummary(row.group)"></span>
+                        </template>
+                        <template x-if="row.kind === 'sub'">
+                          <div
+                            class="inline-flex items-center gap-1"
+                            role="group"
+                            :aria-label="'Impact for ' + (row.entry.label || 'entry')"
+                          >
+                            <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Medium'},{v:'high',l:'High'}]" :key="opt.v">
+                              <button
+                                type="button"
+                                @click="setImpact(row.entry, opt.v)"
+                                :class="impactDotClass(opt.v, row.entry.impact)"
+                                :aria-pressed="(row.entry.impact || 'medium') === opt.v"
+                                :title="opt.l + ' impact'"
+                                class="h-2.5 w-2.5 rounded-full transition-colors"
+                              ></button>
+                            </template>
                           </div>
                         </template>
-                        <!-- B. First run: connected, but never scanned -->
-                        <template x-if="workiq.ready && isFirstRun()">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-indigo-500" x-html="icon('outline:rocket-launch', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">Ready for your first scan</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              WIA hasn't scanned this week yet. Tap below to pull
-                              your <span x-text="(prefs.enabled_signals || []).join(' · ') || 'enabled signals'"></span>
-                              from Work IQ. Usually takes 20–60 seconds.
-                            </p>
-                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700">
-                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Run first scan</span>
-                            </button>
-                          </div>
-                        </template>
-                        <!-- C. Connected, prior scans exist, but this week has no activity -->
-                        <template x-if="workiq.ready && !isFirstRun()">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:calendar-days', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">No activity recorded for this week</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              <!-- Last scan was <span x-text="timeAgo(schedule.last_scan_at)"></span>. -->
-                              <!-- Try a rescan, or pick a different week. -->
-                            </p>
-                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded border px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
-                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Scan this week</span>
-                            </button>
-                          </div>
-                        </template>
-                      </div>
+                      </td>
                     </template>
-                  </td>
+                    <!-- Actions (notes toggle + delete) -->
+                    <template x-if="row.kind !== 'notes'">
+                      <td class="text-center">
+                        <template x-if="row.kind === 'group'">
+                          <button
+                            type="button"
+                            class="text-red-600 hover:text-red-700 disabled:opacity-50"
+                            :disabled="deletingCategory === row.group.category"
+                            :aria-label="'Delete all entries in category ' + row.group.category"
+                            :title="'Delete all entries in ' + row.group.category"
+                            @click.stop="deleteCategory(row.group)"
+                          ><span x-html="icon('trash', 'h-4 w-4')"></span></button>
+                        </template>
+                        <template x-if="row.kind === 'sub'">
+                          <div class="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              @click="toggleNotes(row.entry)"
+                              :class="(row.entry.notes || '').trim() || notesOpen[row.entry.id] ? 'text-amber-600 hover:text-amber-700' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                              :aria-pressed="!!notesOpen[row.entry.id]"
+                              :aria-label="'Toggle notes for ' + (row.entry.label || 'entry')"
+                              :title="(row.entry.notes || '').trim() ? 'Edit notes' : 'Add notes'"
+                            >
+                              <span x-html="icon('pencil-square', 'h-4 w-4')"></span>
+                            </button>
+                            <button class="text-red-600 hover:text-red-700" :aria-label="'Delete entry ' + (row.entry.label || '')" @click="deleteEntry(row.entry)"><span x-html="icon('x-mark', 'h-4 w-4')"></span></button>
+                          </div>
+                        </template>
+                      </td>
+                    </template>
                 </tr>
               </template>
             </tbody>
@@ -655,15 +604,179 @@
                 <tr class="border-t-2 dark:border-slate-700">
                   <td></td>
                   <td class="py-2 pr-3" colspan="2">Daily totals</td>
-                  <template x-for="(label, i) in dayLabels" :key="i">
+                  <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
                     <td class="px-2 text-right tabular-nums" x-text="dayTotal(i)"></td>
                   </template>
                   <td class="px-3 text-right tabular-nums" x-text="weekTotal()"></td>
-                  <td colspan="2"></td>
+                  <td colspan="3"></td>
                 </tr>
               </tfoot>
             </template>
           </table>
+        </div>
+
+        <!-- Empty / loading state — sibling of the table so it spans the
+             full section width and is unaffected by the table's
+             column layout. -->
+        <template x-if="!briefing?.entries?.length">
+          <div class="mt-3">
+            <!-- Skeleton rows during the very first paint -->
+            <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
+              <div class="space-y-2 py-4">
+                <template x-for="n in [1,2,3,4,5]" :key="'rowskel-' + n">
+                  <div class="flex items-center gap-3 px-1">
+                    <div class="h-4 w-24 wia-skeleton"></div>
+                    <div class="h-4 flex-1 wia-skeleton"></div>
+                    <div class="h-4 w-12 wia-skeleton"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- State-aware empty card -->
+            <template x-if="briefing && !loading && !isScanningCurrent()">
+              <div class="py-8 text-center">
+                <!-- A. Work IQ not connected -->
+                <template x-if="!workiq.ready">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:link', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">Connect Work IQ to scan your week</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      WIA reads your calendar, Teams, and email through the Microsoft Work IQ CLI.
+                      You'll be prompted to sign in once.
+                    </p>
+                    <button @click="enableWorkIQ()" :disabled="enabling" class="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
+                      <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+                    </button>
+                  </div>
+                </template>
+                <!-- B. First run: connected, but never scanned -->
+                <template x-if="workiq.ready && isFirstRun()">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-indigo-500" x-html="icon('outline:rocket-launch', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">Ready for your first scan</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      WIA hasn't scanned this week yet. Tap below to pull
+                      your <span x-text="(prefs.enabled_signals || []).join(' · ') || 'enabled signals'"></span>
+                      from Work IQ. Usually takes 20–60 seconds.
+                    </p>
+                    <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700">
+                      <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Run first scan</span>
+                    </button>
+                  </div>
+                </template>
+                <!-- C. Connected, prior scans exist, but this week has no activity -->
+                <template x-if="workiq.ready && !isFirstRun()">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:calendar-days', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">No activity recorded for this week</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      <!-- Last scan was <span x-text="timeAgo(schedule.last_scan_at)"></span>. -->
+                      <!-- Try a rescan, or pick a different week. -->
+                    </p>
+                    <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded border px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+                      <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Scan this week</span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Inline manual-entry form: collapses by default; opened via the
+             "Add manual entry" button above. Lives beneath the table so the
+             user can fill it in while still seeing the week's existing
+             entries for context. -->
+        <div x-show="manualFormOpen" x-cloak x-transition class="mt-4 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4 dark:border-indigo-900 dark:bg-indigo-950/30">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h4 class="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Add manual entry</h4>
+            <span class="text-[11px] text-indigo-700/80 dark:text-indigo-300/80">For work missed by the scan. Counted in totals &amp; Review.</span>
+          </div>
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Label</span>
+              <input
+                type="text"
+                x-model="manualEntry.label"
+                placeholder="e.g. Customer follow-up call"
+                class="rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              />
+            </label>
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Category</span>
+              <input
+                type="text"
+                x-model="manualEntry.category"
+                placeholder="e.g. Customer · Internal · Focus"
+                class="rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              />
+            </label>
+          </div>
+
+          <div class="mt-3">
+            <div class="text-xs text-slate-600 dark:text-slate-300">Hours per day</div>
+            <div class="mt-1 grid grid-cols-7 gap-2">
+              <template x-for="i in [0,1,2,3,4,5,6]" :key="'mday-' + i">
+                <label class="flex flex-col items-center gap-1 text-[11px]">
+                  <span class="text-slate-500 dark:text-slate-400" x-text="dayLabel(i)"></span>
+                  <span class="text-[10px] text-slate-400" x-text="dayDate(i)"></span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    x-model="manualEntry.daily[i]"
+                    placeholder="0"
+                    class="w-full rounded border bg-white px-1 py-1 text-right text-sm tabular-nums dark:border-slate-700 dark:bg-slate-900"
+                  />
+                </label>
+              </template>
+            </div>
+          </div>
+
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Impact</span>
+              <div class="inline-flex w-fit overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600" role="group" aria-label="Impact">
+                <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="'mi-' + opt.v">
+                  <button
+                    type="button"
+                    @click="manualEntry.impact = opt.v"
+                    :class="impactSegmentClass(opt.v, manualEntry.impact)"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
+                    x-text="opt.l"
+                  ></button>
+                </template>
+              </div>
+            </div>
+            <label class="flex flex-col gap-1 text-xs">
+              <span class="text-slate-600 dark:text-slate-300">Notes (optional)</span>
+              <textarea
+                x-model="manualEntry.notes"
+                rows="2"
+                placeholder="Context — what you actually did, outcomes, follow-ups."
+                class="resize-y rounded border bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+              ></textarea>
+            </label>
+          </div>
+
+          <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              @click="cancelManualForm()"
+              :disabled="manualSaving"
+              class="rounded border px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+            >Cancel</button>
+            <button
+              type="button"
+              @click="saveManualEntry()"
+              :disabled="manualSaving"
+              class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <span x-html="icon('plus', 'h-4 w-4')"></span>
+              <span x-text="manualSaving ? 'Saving…' : 'Add entry'"></span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -679,6 +792,18 @@
               <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
                 Roll up your weekly briefings into 1:1-ready insights and talking points.
               </p>
+              <template x-if="review && review.missing_weeks && review.missing_weeks.length">
+                <p class="mt-2 inline-flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span class="wia-pulse-dot" x-show="reviewScanning" x-cloak></span>
+                  <span>
+                    <strong x-text="review.missing_weeks.length"></strong>
+                    of <span x-text="review.expected_weeks"></span> weeks not yet scanned.
+                  </span>
+                  <button type="button" @click="openScans('missing')" class="rounded border border-amber-300 px-2 py-0.5 font-medium hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900/60">
+                    Manage in Scans
+                  </button>
+                </p>
+              </template>
             </div>
             <div class="flex flex-wrap items-center gap-2 text-sm">
               <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Period kind">
@@ -727,67 +852,6 @@
           </template>
         </section>
 
-        <!-- Missing data -------------------------------------------------- -->
-        <section x-show="review && review.missing_weeks && review.missing_weeks.length" class="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900 dark:bg-amber-950/40">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">
-              <h3 class="font-semibold text-amber-900 dark:text-amber-200">Missing data for this period</h3>
-              <p class="mt-1 text-sm text-amber-800 dark:text-amber-300">
-                <span x-text="review.missing_weeks.length"></span> of
-                <span x-text="review.expected_weeks"></span> weeks have not been scanned yet.
-                Running scans for these weeks will fill them into your review.
-              </p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                @click="scanAllMissing()"
-                :disabled="reviewScanning"
-                class="rounded bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
-              >
-                <span x-text="reviewScanning ? 'Scanning…' : 'Scan all missing weeks'"></span>
-              </button>
-            </div>
-          </div>
-          <ul class="mt-3 space-y-2 text-sm">
-            <template x-for="g in missingWeeksByMonth()" :key="g.key">
-              <li class="rounded border border-amber-200 bg-white dark:border-amber-900 dark:bg-slate-900">
-                <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                  <button
-                    type="button"
-                    @click="missingMonthExpanded[g.key] = !missingMonthExpanded[g.key]"
-                    class="flex items-center gap-2 text-left"
-                    :aria-expanded="!!missingMonthExpanded[g.key]"
-                  >
-                    <span class="text-slate-500 dark:text-slate-400" x-html="icon(missingMonthExpanded[g.key] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
-                    <span class="font-medium text-amber-900 dark:text-amber-200" x-text="g.label"></span>
-                    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/60 dark:text-amber-200" x-text="g.weeks.length + (g.weeks.length === 1 ? ' week' : ' weeks')"></span>
-                  </button>
-                  <button
-                    @click="scanMissingMonth(g.key)"
-                    :disabled="reviewScanning"
-                    class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
-                    x-text="reviewScanning ? 'Scanning…' : 'Scan this month'"
-                  ></button>
-                </div>
-                <ul x-show="missingMonthExpanded[g.key]" x-cloak class="grid grid-cols-1 gap-1.5 border-t border-amber-200 px-3 py-2 text-sm sm:grid-cols-2 lg:grid-cols-3 dark:border-amber-900">
-                  <template x-for="w in g.weeks" :key="w">
-                    <li class="flex items-center justify-between rounded border border-amber-200 bg-white px-2 py-1 dark:border-amber-900 dark:bg-slate-900">
-                      <span class="font-mono text-xs" x-text="'Week of ' + w"></span>
-                      <button
-                        @click="scanMissingWeek(w)"
-                        :disabled="reviewScanning || (scanningWeek === w)"
-                        class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
-                        x-text="scanningWeek === w ? 'Scanning…' : 'Scan'"
-                      ></button>
-                    </li>
-                  </template>
-                </ul>
-              </li>
-            </template>
-          </ul>
-          <p x-show="reviewScanError" x-text="reviewScanError" class="mt-2 text-xs text-red-700 dark:text-red-400"></p>
-        </section>
-
         <!-- Category breakdown + Top initiatives -->
         <div x-show="review && review.status === 'ok'" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <section class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -811,18 +875,61 @@
             <h3 class="font-semibold">Top initiatives</h3>
             <ul class="mt-3 space-y-1 text-sm">
               <template x-for="t in review.top_labels" :key="t.label">
-                <li class="flex items-start justify-between border-b py-1.5 dark:border-slate-700">
-                  <div class="min-w-0 pr-3">
-                    <div class="truncate" x-text="t.label" :title="t.label"></div>
-                    <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                <li class="border-b py-1.5 dark:border-slate-700">
+                  <div class="flex items-start justify-between">
+                    <div class="min-w-0 pr-3">
+                      <div class="truncate flex items-center gap-1">
+                        <template x-if="t.impact === 'high'">
+                          <span class="text-amber-500" x-html="icon('star', 'h-3.5 w-3.5')"></span>
+                        </template>
+                        <span x-text="t.label" :title="t.label"></span>
+                      </div>
+                      <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                    </div>
+                    <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
                   </div>
-                  <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+                  <template x-if="(t.notes || []).length">
+                    <ul class="mt-1 space-y-0.5 pl-4 text-[11px] text-slate-600 dark:text-slate-300">
+                      <template x-for="(note, ni) in t.notes" :key="t.label + '-n-' + ni">
+                        <li class="list-disc"><span class="italic" x-text="note"></span></li>
+                      </template>
+                    </ul>
+                  </template>
                 </li>
               </template>
               <template x-if="!review.top_labels.length"><li class="py-3 text-slate-500">No initiatives recorded.</li></template>
             </ul>
           </section>
         </div>
+
+        <!-- High-impact items (user-flagged) -->
+        <section x-show="review && review.high_impact_labels && review.high_impact_labels.length" class="rounded-lg border-2 border-amber-300 bg-amber-50/60 p-6 shadow-sm dark:border-amber-700 dark:bg-amber-950/30">
+          <div class="flex items-center gap-2">
+            <span class="text-amber-500" x-html="icon('star', 'h-5 w-5')"></span>
+            <h3 class="font-semibold">High-impact items</h3>
+            <span class="text-xs text-slate-500 dark:text-slate-400">· flagged in WIA Briefing</span>
+          </div>
+          <ul class="mt-3 space-y-1 text-sm">
+            <template x-for="t in (review?.high_impact_labels || [])" :key="'hi-' + t.label">
+              <li class="border-b border-amber-200 py-1.5 dark:border-amber-800">
+                <div class="flex items-start justify-between">
+                  <div class="min-w-0 pr-3">
+                    <div class="truncate font-medium" x-text="t.label" :title="t.label"></div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400" x-text="(t.category || '') + ' · ' + t.weeks_active + ' wk' + (t.weeks_active !== 1 ? 's' : '')"></div>
+                  </div>
+                  <div class="font-medium tabular-nums" x-text="t.hours.toFixed(0) + 'h'"></div>
+                </div>
+                <template x-if="(t.notes || []).length">
+                  <ul class="mt-1 space-y-0.5 pl-4 text-[11px] text-slate-700 dark:text-amber-100/80">
+                    <template x-for="(note, ni) in t.notes" :key="'hi-' + t.label + '-n-' + ni">
+                      <li class="list-disc"><span class="italic" x-text="note"></span></li>
+                    </template>
+                  </ul>
+                </template>
+              </li>
+            </template>
+          </ul>
+        </section>
 
         <!-- Insights -->
         <section x-show="review && review.insights && review.insights.length" class="rounded-lg border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -890,9 +997,867 @@
       </div><!-- /review view -->
     </main>
 
-    <footer class="mx-auto max-w-7xl px-6 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+    <footer class="px-6 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
       WIA <span x-text="appVersion"></span> - powered by <a class="underline hover:no-underline" href="https://github.com/microsoft/work-iq" target="_blank" rel="noopener">Work IQ</a>
     </footer>
+
+    <!-- Global Scans slide-over: a single right-side panel that owns
+         schedule, last-scan status, running-scan banners, scan history,
+         and Review's missing-weeks workflow. Triggered by the header
+         "Scans" button so the Briefing / Review cards stay focused on
+         their primary content. -->
+    <div
+      x-show="scansOpen"
+      x-cloak
+      class="fixed inset-0 z-40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="scans-panel-title"
+    >
+      <div
+        x-show="scansOpen"
+        x-transition.opacity.duration.150ms
+        @click="closeScans()"
+        class="absolute inset-0 bg-slate-900/40 dark:bg-slate-950/60"
+      ></div>
+      <aside
+        x-show="scansOpen"
+        x-transition:enter="transform transition ease-out duration-200"
+        x-transition:enter-start="translate-x-full"
+        x-transition:enter-end="translate-x-0"
+        x-transition:leave="transform transition ease-in duration-150"
+        x-transition:leave-start="translate-x-0"
+        x-transition:leave-end="translate-x-full"
+        class="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl dark:bg-slate-900"
+      >
+        <header class="flex items-center justify-between border-b px-5 py-3 dark:border-slate-700">
+          <h2 id="scans-panel-title" class="inline-flex items-center gap-2 text-base font-semibold">
+            <span x-html="icon('queue-list', 'h-4 w-4')"></span>
+            <span>Scans</span>
+            <span
+              x-show="hasActiveScan()"
+              x-cloak
+              class="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-200"
+            >
+              <span class="wia-pulse-dot"></span>
+              <span>Running</span>
+            </span>
+          </h2>
+          <button
+            @click="closeScans()"
+            class="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Close scans panel"
+          >
+            <span x-html="icon('x-mark', 'h-5 w-5')"></span>
+          </button>
+        </header>
+
+        <!-- Tabs -->
+        <div class="border-b px-5 py-3 dark:border-slate-700">
+          <div
+            class="inline-flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+            role="tablist"
+            aria-label="Scans panel tabs"
+          >
+            <button
+              type="button"
+              role="tab"
+              @click="scansTab = 'status'"
+              :class="scansTab === 'status' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+              class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+            >
+              <span x-html="icon('arrow-path', 'h-3.5 w-3.5')"></span>
+              <span>Status</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              @click="scansTab = 'missing'"
+              :class="scansTab === 'missing' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+              class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+            >
+              <span x-html="icon('calendar-days', 'h-3.5 w-3.5')"></span>
+              <span>Missing</span>
+              <span
+                x-show="review && review.missing_weeks && review.missing_weeks.length"
+                x-cloak
+                class="ml-1 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/60 dark:text-amber-200"
+                x-text="(review && review.missing_weeks) ? review.missing_weeks.length : 0"
+              ></span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              @click="scansTab = 'history'"
+              :class="scansTab === 'history' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+              class="inline-flex items-center gap-1 rounded-md px-3 py-1"
+            >
+              <span x-html="icon('queue-list', 'h-3.5 w-3.5')"></span>
+              <span>History</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-5 py-4">
+          <!-- STATUS tab ------------------------------------------------ -->
+          <div x-show="scansTab === 'status'" class="space-y-5">
+            <div class="space-y-2">
+              <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Active</h3>
+              <template x-if="!hasActiveScan()">
+                <p class="rounded border bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                  No scans running.
+                </p>
+              </template>
+              <template x-if="scanningBriefing">
+                <div class="flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200">
+                  <span class="wia-pulse-dot"></span>
+                  <span class="flex-1">
+                    <template x-if="isScanningCurrent()">
+                      <span>Scanning current week…</span>
+                    </template>
+                    <template x-if="!isScanningCurrent()">
+                      <span>
+                        Scanning week of <strong x-text="scanningWeekIso"></strong>…
+                        <button type="button" class="ml-1 underline" @click="closeScans(); goToScanningWeek()">jump to it</button>
+                      </span>
+                    </template>
+                  </span>
+                </div>
+              </template>
+              <template x-if="reviewScanning">
+                <div class="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span class="wia-pulse-dot"></span>
+                  <span class="flex-1">
+                    <template x-if="scanningWeek">
+                      <span>Backfilling week of <strong x-text="scanningWeek"></strong>…</span>
+                    </template>
+                    <template x-if="!scanningWeek">
+                      <span>Backfilling missing weeks…</span>
+                    </template>
+                  </span>
+                </div>
+              </template>
+            </div>
+
+            <div class="space-y-2">
+              <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Last scan</h3>
+              <div class="text-sm">
+                <span class="font-medium" x-text="schedule.last_scan_at ? formatDateTime(schedule.last_scan_at) : 'never'"></span>
+                <template x-if="schedule.last_scan_week_of">
+                  <span class="ml-1 text-slate-500 dark:text-slate-400" x-text="'· week of ' + schedule.last_scan_week_of"></span>
+                </template>
+                <template x-if="schedule.last_scan_trigger">
+                  <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300" x-text="schedule.last_scan_trigger"></span>
+                </template>
+                <template x-if="schedule.last_scan_status">
+                  <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] dark:bg-slate-800" x-text="schedule.last_scan_status"></span>
+                </template>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Auto-scan</h3>
+              <div class="flex items-center gap-2 text-sm">
+                <label class="sr-only" for="scans-autoscan">Auto-scan interval</label>
+                <select
+                  id="scans-autoscan"
+                  x-model.number="schedule.interval_minutes"
+                  @change="setSchedule(schedule.interval_minutes)"
+                  class="rounded border bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800"
+                >
+                  <option :value="0">Manual only</option>
+                  <option :value="60">Every 1 hour</option>
+                  <option :value="120">Every 2 hours</option>
+                  <option :value="240">Every 4 hours</option>
+                  <option :value="480">Every 8 hours</option>
+                  <option :value="1440">Once a day</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- MISSING tab ----------------------------------------------- -->
+          <div x-show="scansTab === 'missing'" x-cloak class="space-y-3">
+            <template x-if="!review">
+              <p class="rounded border bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                Open the Review tab and pick a period to surface missing weeks here.
+              </p>
+            </template>
+            <template x-if="review && (!review.missing_weeks || !review.missing_weeks.length)">
+              <p class="rounded border bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+                No missing weeks for the current Review period.
+              </p>
+            </template>
+            <template x-if="review && review.missing_weeks && review.missing_weeks.length">
+              <div class="space-y-3">
+                <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900 dark:bg-amber-950/40">
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="font-medium text-amber-900 dark:text-amber-200">Missing data</div>
+                      <p class="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
+                        <span x-text="review.missing_weeks.length"></span> of
+                        <span x-text="review.expected_weeks"></span> weeks not yet scanned.
+                      </p>
+                    </div>
+                    <button
+                      @click="scanAllMissing()"
+                      :disabled="reviewScanning"
+                      class="rounded bg-amber-600 px-3 py-1.5 text-xs text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      <span x-text="reviewScanning ? 'Scanning…' : 'Scan all missing weeks'"></span>
+                    </button>
+                  </div>
+                </div>
+                <ul class="space-y-2 text-sm">
+                  <template x-for="g in missingWeeksByMonth()" :key="g.key">
+                    <li class="rounded border border-amber-200 bg-white dark:border-amber-900 dark:bg-slate-900">
+                      <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                        <button
+                          type="button"
+                          @click="missingMonthExpanded[g.key] = !missingMonthExpanded[g.key]"
+                          class="flex items-center gap-2 text-left"
+                          :aria-expanded="!!missingMonthExpanded[g.key]"
+                        >
+                          <span class="text-slate-500 dark:text-slate-400" x-html="icon(missingMonthExpanded[g.key] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+                          <span class="font-medium text-amber-900 dark:text-amber-200" x-text="g.label"></span>
+                          <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/60 dark:text-amber-200" x-text="g.weeks.length + (g.weeks.length === 1 ? ' week' : ' weeks')"></span>
+                        </button>
+                        <button
+                          @click="scanMissingMonth(g.key)"
+                          :disabled="reviewScanning"
+                          class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                          x-text="reviewScanning ? 'Scanning…' : 'Scan this month'"
+                        ></button>
+                      </div>
+                      <ul x-show="missingMonthExpanded[g.key]" x-cloak class="grid grid-cols-1 gap-1.5 border-t border-amber-200 px-3 py-2 text-sm dark:border-amber-900">
+                        <template x-for="w in g.weeks" :key="w">
+                          <li class="flex items-center justify-between rounded border border-amber-200 bg-white px-2 py-1 dark:border-amber-900 dark:bg-slate-900">
+                            <span class="font-mono text-xs" x-text="'Week of ' + w"></span>
+                            <button
+                              @click="scanMissingWeek(w)"
+                              :disabled="reviewScanning || (scanningWeek === w)"
+                              class="rounded border border-amber-300 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                              x-text="scanningWeek === w ? 'Scanning…' : 'Scan'"
+                            ></button>
+                          </li>
+                        </template>
+                      </ul>
+                    </li>
+                  </template>
+                </ul>
+                <p x-show="reviewScanError" x-text="reviewScanError" class="text-xs text-red-700 dark:text-red-400"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- HISTORY tab ----------------------------------------------- -->
+          <div x-show="scansTab === 'history'" x-cloak class="space-y-3">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-slate-500 dark:text-slate-400">Range:</span>
+              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History range">
+                <template x-for="r in ['7d','30d','all']" :key="r">
+                  <button
+                    type="button"
+                    @click="setHistoryRange(r)"
+                    :class="historyRange === r ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                    class="rounded-md px-2 py-0.5 text-xs uppercase"
+                    x-text="r === 'all' ? 'All' : r"
+                  ></button>
+                </template>
+              </div>
+              <span class="ml-2 text-slate-500 dark:text-slate-400">View:</span>
+              <div class="flex items-center gap-0.5 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="History view">
+                <button type="button" @click="setHistoryView('flat')" :class="historyView === 'flat' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">All scans</button>
+                <button type="button" @click="setHistoryView('weekly')" :class="historyView === 'weekly' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="rounded-md px-2 py-0.5 text-xs">Group by week</button>
+              </div>
+            </div>
+
+            <template x-if="historyLoading">
+              <div class="text-xs text-slate-500 dark:text-slate-400">Loading…</div>
+            </template>
+            <template x-if="!historyLoading && history.length === 0">
+              <div class="text-xs text-slate-500 dark:text-slate-400">No scans recorded yet.</div>
+            </template>
+
+            <template x-if="!historyLoading && history.length > 0 && historyView === 'flat'">
+              <div class="overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
+                <table class="w-full min-w-[520px] text-left text-xs">
+                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
+                    <tr>
+                      <th class="py-1 pl-2 pr-3 font-medium">Ran at</th>
+                      <th class="py-1 pr-3 font-medium">Week</th>
+                      <th class="py-1 pr-3 font-medium">Trigger</th>
+                      <th class="py-1 pr-3 font-medium">Status</th>
+                      <th class="py-1 pr-3 font-medium">Entries</th>
+                      <th class="py-1 pr-3 font-medium">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="row in filteredHistory()" :key="row.id">
+                      <tr class="border-t dark:border-slate-700">
+                        <td class="py-1 pl-2 pr-3" x-text="formatDateTime(row.ran_at)"></td>
+                        <td class="py-1 pr-3" x-text="row.week_of"></td>
+                        <td class="py-1 pr-3 uppercase tracking-wide text-slate-500 dark:text-slate-400" x-text="row.trigger"></td>
+                        <td class="py-1 pr-3" x-text="row.status"></td>
+                        <td class="py-1 pr-3" x-text="row.entry_count"></td>
+                        <td class="py-1 pr-3" x-text="formatDuration(row.duration_ms)"></td>
+                      </tr>
+                    </template>
+                    <template x-if="filteredHistory().length === 0">
+                      <tr><td colspan="6" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <template x-if="!historyLoading && history.length > 0 && historyView === 'weekly'">
+              <div class="overflow-y-auto overflow-x-auto rounded border dark:border-slate-700">
+                <table class="w-full min-w-[520px] text-left text-xs">
+                  <thead class="sticky top-0 z-10 bg-white text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">
+                    <tr>
+                      <th class="w-6"></th>
+                      <th class="py-1 pr-3 font-medium">Week</th>
+                      <th class="py-1 pr-3 font-medium">Scans</th>
+                      <th class="py-1 pr-3 font-medium">Last run</th>
+                      <th class="py-1 pr-3 font-medium">Last status</th>
+                      <th class="py-1 pr-3 font-medium">Last entries</th>
+                      <th class="py-1 pr-3 font-medium">Max duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="g in groupedHistory()" :key="g.week_of">
+                      <template x-for="row in [{kind:'group'}, ...(historyExpandedWeeks[g.week_of] ? g.scans.map(s => ({kind:'sub', scan:s})) : [])]" :key="g.week_of + ':' + (row.kind === 'group' ? 'g' : row.scan.id)">
+                        <tr :class="row.kind === 'group' ? 'border-t bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40 font-medium' : 'border-t border-dashed dark:border-slate-700/60'">
+                          <template x-if="row.kind === 'group'">
+                            <td class="text-center align-middle">
+                              <button @click="toggleHistoryWeek(g.week_of)" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" :aria-label="(historyExpandedWeeks[g.week_of] ? 'Collapse ' : 'Expand ') + g.week_of">
+                                <span x-html="icon(historyExpandedWeeks[g.week_of] ? 'chevron-down' : 'chevron-right', 'h-3.5 w-3.5')"></span>
+                              </button>
+                            </td>
+                          </template>
+                          <template x-if="row.kind === 'sub'"><td></td></template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.week_of"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3 text-slate-500 dark:text-slate-400" x-text="'· ' + (row.scan.trigger || '').toUpperCase()"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.scans.length"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'"><td></td></template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="formatDateTime(g.last_ran_at)"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="formatDateTime(row.scan.ran_at)"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.last_status"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="row.scan.status"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="g.last_entry_count"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="row.scan.entry_count"></td>
+                          </template>
+                          <template x-if="row.kind === 'group'">
+                            <td class="py-1 pr-3" x-text="formatDuration(g.max_duration_ms)"></td>
+                          </template>
+                          <template x-if="row.kind === 'sub'">
+                            <td class="py-1 pr-3" x-text="formatDuration(row.scan.duration_ms)"></td>
+                          </template>
+                        </tr>
+                      </template>
+                    </template>
+                    <template x-if="groupedHistory().length === 0">
+                      <tr><td colspan="7" class="py-3 text-center text-slate-500 dark:text-slate-400">No scans in this range.</td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <div x-show="!historyLoading && history.length > 0" class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span x-text="historyCaption()"></span>
+              <button
+                x-show="historyView === 'flat' && canLoadMoreHistory()"
+                @click="loadMoreHistory()"
+                :disabled="historyLoading"
+                class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              >Load more</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Global Preferences slide-over: hosts scan filters (exclusions,
+         high-impact keywords, organization label). Decoupled from
+         Briefing so Review and future surfaces can link to it. -->
+    <div
+      x-show="prefsOpen"
+      x-cloak
+      class="fixed inset-0 z-40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="prefs-panel-title"
+    >
+      <div
+        x-show="prefsOpen"
+        x-transition.opacity.duration.150ms
+        @click="closePrefs()"
+        class="absolute inset-0 bg-slate-900/40 dark:bg-slate-950/60"
+      ></div>
+      <aside
+        x-show="prefsOpen"
+        x-transition:enter="transform transition ease-out duration-200"
+        x-transition:enter-start="translate-x-full"
+        x-transition:enter-end="translate-x-0"
+        x-transition:leave="transform transition ease-in duration-150"
+        x-transition:leave-start="translate-x-0"
+        x-transition:leave-end="translate-x-full"
+        class="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl dark:bg-slate-900"
+      >
+        <!-- <header class="flex items-center justify-between border-b px-4 py-3 dark:border-slate-700"> -->
+        <header class="flex items-center justify-between px-4 py-3">
+          <h2 id="prefs-panel-title" class="inline-flex items-center gap-2 text-base font-semibold">
+            <span x-html="icon('cog-6-tooth', 'h-4 w-4')"></span>
+            <span>Preferences</span>
+          </h2>
+          <button
+            @click="closePrefs()"
+            class="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Close preferences panel"
+          >
+            <span x-html="icon('x-mark', 'h-5 w-5')"></span>
+          </button>
+        </header>
+
+        <div class="flex-1 overflow-y-auto">
+          <!-- App section: preferences not tied to scans. Lives at the top
+               so its content renders directly beneath its own header instead
+               of being implied by a faraway tab row. -->
+          <div class="flex items-center gap-3 px-4 pt-4">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">App</span>
+            <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+          </div>
+          <section class="px-4 py-4">
+            <!-- Appearance -->
+            <div class="space-y-3 text-xs">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Pick a theme. Auto follows the operating system.">
+                  <span>Theme</span>
+                </span>
+                <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Theme">
+                  <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('sun', 'h-3.5 w-3.5')"></span><span>Light</span></button>
+                  <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('moon', 'h-3.5 w-3.5')"></span><span>Dark</span></button>
+                  <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="First day of the week shown in the Briefing table.">
+                  <span>Week starts on</span>
+                </span>
+                <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Week starts on">
+                  <button type="button" @click="setWeekStartsOn('sun')" :class="prefs.week_starts_on === 'sun' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Sunday"><span>Sun</span></button>
+                  <button type="button" @click="setWeekStartsOn('mon')" :class="prefs.week_starts_on === 'mon' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Monday"><span>Mon</span></button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Scan section: tabs sit right next to their own header and content. -->
+          <!-- <div class="flex items-center gap-3 px-4">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Scan</span>
+            <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+          </div> -->
+          <section class="px-4 py-4">
+            <header class="mb-3 flex items-center gap-3">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Scan</span>
+              <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Applies to the next scan</p>
+            </header>
+
+            <!-- <header class="mb-1 flex items-center gap-3">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Scan</span>
+              <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+            </header>
+            <p class="mb-3 text-[11px] text-slate-400 dark:text-slate-500">Applies to the next scan.</p>             -->
+
+            <!-- Filters row: structured identically to the Theme row above
+                 (label width w-28, gap-2, gap-1 inside the tab group, px-2
+                 py-1 buttons) so the tab group's left edge aligns vertically
+                 with Theme's, and all four labeled tabs fit on one line
+                 within the standard max-w-lg slide-over. -->
+            <div class="mb-1 flex items-center gap-2 text-xs">
+              <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Choose which aspect of the next scan to configure.">
+                <span>Filters</span>
+              </span>
+              <div
+                class="flex flex-wrap items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
+                role="tablist"
+                aria-label="Scan preferences tabs"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'signals'"
+                  @click="prefsTab = 'signals'"
+                  :class="prefsTab === 'signals' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('magnifying-glass', 'h-3.5 w-3.5')"></span><span>Signals</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'exclude'"
+                  @click="prefsTab = 'exclude'"
+                  :class="prefsTab === 'exclude' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('x-mark', 'h-3.5 w-3.5')"></span><span>Exclusions</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'impact'"
+                  @click="prefsTab = 'impact'"
+                  :class="prefsTab === 'impact' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('star', 'h-3.5 w-3.5')"></span><span>Impact</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'categories'"
+                  @click="prefsTab = 'categories'"
+                  :class="prefsTab === 'categories' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('queue-list', 'h-3.5 w-3.5')"></span><span>Categories</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'org'"
+                  @click="prefsTab = 'org'"
+                  :class="prefsTab === 'org' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('check-circle', 'h-3.5 w-3.5')"></span><span>Organization</span>
+                </button>
+              </div>
+            </div>
+            <div class="h-4"></div>
+
+          <!-- Signals tab -->
+          <div x-show="prefsTab === 'signals'" class="space-y-3 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Pick which Work IQ signals WIA pulls on the next scan. You can
+              also toggle these inline next to the Scan button in Briefing.
+            </p>
+            <div class="flex justify-center">
+              <div class="inline-flex flex-wrap items-center justify-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Signals to scan">
+              <template x-for="sig in availableSignals" :key="'pref-' + sig.key">
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="(prefs.enabled_signals || []).includes(sig.key)"
+                  @click="toggleSignal(sig.key, !(prefs.enabled_signals || []).includes(sig.key))"
+                  :class="(prefs.enabled_signals || []).includes(sig.key)
+                    ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700'
+                    : 'text-slate-600 opacity-70 hover:opacity-100 dark:text-slate-300'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors"
+                >
+                  <span x-html="icon(sig.icon, 'h-3.5 w-3.5')"></span>
+                  <span x-text="sig.label"></span>
+                </button>
+              </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Exclusions tab -->
+          <div x-show="prefsTab === 'exclude'" x-cloak class="space-y-4 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Block specific meetings from appearing in Briefing. These filters
+              are applied during the next scan, so changes here won't affect
+              existing Briefing entries until then.
+            </p>
+            <!-- Keywords -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Block titles or participants matching these substrings (case-insensitive) are skipped during the next scan.">
+                <span>Keywords</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="kw in (prefs.excluded_keywords || [])" :key="'pkw-' + kw">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                    <span x-text="kw"></span>
+                    <button
+                      type="button"
+                      class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                      @click="removeExcludedKeyword(kw)"
+                      :aria-label="'Remove ' + kw"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newExcludedKeyword"
+                  @keydown.enter.prevent="addExcludedKeyword()"
+                  placeholder="e.g. Community Call"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add excluded keyword"
+                />
+              </div>
+            </div>
+
+            <!-- Calendar categories -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Calendar events tagged with these Outlook categories (case-insensitive) are skipped during the next scan.">
+                <span>Calendar categories</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="cat in (prefs.excluded_calendar_categories || [])" :key="'pcat-' + cat">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                    <span x-text="cat"></span>
+                    <button
+                      type="button"
+                      class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                      @click="removeExcludedCategory(cat)"
+                      :aria-label="'Remove ' + cat"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newExcludedCategory"
+                  @keydown.enter.prevent="addExcludedCategory()"
+                  placeholder="e.g. Personal"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add excluded calendar category"
+                />
+              </div>
+            </div>
+
+            <!-- Private meetings -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Drop calendar events whose Outlook sensitivity is private, personal, or confidential.">
+                <span>Private meetings</span>
+              </span>
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="!!prefs.exclude_private_meetings"
+                @click="toggleExcludePrivate(!prefs.exclude_private_meetings)"
+                :class="prefs.exclude_private_meetings
+                  ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
+                class="inline-flex items-center gap-1 rounded-md px-3 py-0.5 text-xs font-medium transition-colors"
+              >
+                <span x-text="prefs.exclude_private_meetings ? 'Excluded' : 'Included'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Impact tab -->
+          <div x-show="prefsTab === 'impact'" x-cloak class="space-y-3 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Mark entries as High impact based on keywords in their title or
+              rolled-up label or their categories. This is meant to help you quickly identify likely
+              important meetings in Briefing and Review, but use it with care,
+              it can produce false positives and negatives, so we recommend
+              starting with a few obvious keywords and adjusting over time as
+              you see how it affects your Briefing.
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose title or rolled-up label contains any of these substrings (case-insensitive) are marked High impact.">
+                <span>High-impact keywords</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="kw in (prefs.high_impact_keywords || [])" :key="'phikw-' + kw">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                    <span x-text="kw"></span>
+                    <button
+                      type="button"
+                      class="text-amber-700 hover:text-red-600 dark:text-amber-200 dark:hover:text-red-400"
+                      @click="removeHighImpactKeyword(kw)"
+                      :aria-label="'Remove ' + kw"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newHighImpactKeyword"
+                  @keydown.enter.prevent="addHighImpactKeyword()"
+                  placeholder="e.g. launch"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add high-impact keyword"
+                />
+              </div>
+            </div>
+
+            <!-- High-impact calendar categories -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Briefing entries whose constituent calendar events carry any of these Outlook categories (case-insensitive) are marked High impact.">
+                <span>High-impact categories</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="cat in (prefs.high_impact_calendar_categories || [])" :key="'phicat-' + cat">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                    <span x-text="cat"></span>
+                    <button
+                      type="button"
+                      class="text-amber-700 hover:text-red-600 dark:text-amber-200 dark:hover:text-red-400"
+                      @click="removeHighImpactCategory(cat)"
+                      :aria-label="'Remove ' + cat"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newHighImpactCategory"
+                  @keydown.enter.prevent="addHighImpactCategory()"
+                  placeholder="e.g. Customer"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add high-impact calendar category"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Categories tab -->
+          <div x-show="prefsTab === 'categories'" x-cloak class="space-y-3 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Outlook categories listed here are treated as <em>umbrella</em>
+              tags. When an event carries one of these (for example
+              <code>Customer</code> category), WIA does not bucket every event under
+              the umbrella name; instead it derives a more specific
+              category from the event title (so
+              <code>Customer</code> + <em>&ldquo;Contoso - Azure Landing Zone&rdquo;</em>
+              becomes a <code>Contoso</code> entry). Leave empty to use Outlook
+              tags 1:1.
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Outlook calendar categories whose name is too generic to use as a bucket on its own \u2014 WIA will derive a more specific category from each event\u2019s title.">
+                <span>Umbrella categories</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="cat in (prefs.umbrella_calendar_categories || [])" :key="'pumb-' + cat">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200">
+                    <span x-text="cat"></span>
+                    <button
+                      type="button"
+                      class="text-indigo-700 hover:text-red-600 dark:text-indigo-200 dark:hover:text-red-400"
+                      @click="removeUmbrellaCategory(cat)"
+                      :aria-label="'Remove ' + cat"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newUmbrellaCategory"
+                  @keydown.enter.prevent="addUmbrellaCategory()"
+                  placeholder="e.g. Customer"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add umbrella calendar category"
+                />
+              </div>
+            </div>
+
+            <div class="border-t pt-3 dark:border-slate-700">
+              <p class="text-slate-500 dark:text-slate-400">
+                By default, any Outlook category on an <em>internal-only</em>
+                meeting (every attendee in your org) is collapsed into the
+                <code>Internal</code> bucket, this keeps generic
+                organising tags like <code>Workshop</code> or
+                <code>Service</code> from spawning one-off categories. List
+                tags here that should be kept verbatim instead.
+              </p>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Outlook tags that should remain their own top-level category even on internal-only meetings.">
+                  <span>Preserve tags</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="cat in (prefs.preserve_calendar_categories || [])" :key="'pres-' + cat">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                      <span x-text="cat"></span>
+                      <button
+                        type="button"
+                        class="text-emerald-700 hover:text-red-600 dark:text-emerald-200 dark:hover:text-red-400"
+                        @click="removePreserveCategory(cat)"
+                        :aria-label="'Remove ' + cat"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newPreserveCategory"
+                    @keydown.enter.prevent="addPreserveCategory()"
+                    placeholder="e.g. Design"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add preserve calendar category"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Organization tab -->
+          <div x-show="prefsTab === 'org'" x-cloak class="space-y-2 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Enter the name of your organization to help with grouping and labeling in WIA Briefing and Review.
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="Categories matching this name (alongside Internal and Admin) default to Low impact in WIA Review.">
+                <span>Your organization</span>
+              </span>
+              <form class="inline-flex items-center gap-1" @submit.prevent="saveOrganization()">
+                <input
+                  type="text"
+                  x-model="organizationDraft"
+                  placeholder="e.g. Microsoft"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Organization label"
+                />
+                <button
+                  type="submit"
+                  :disabled="organizationDraft === (prefs.organization_label || '')"
+                  class="rounded border px-2 py-0.5 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
+                >Save</button>
+              </form>
+            </div>
+            <template x-if="prefs.organization_label_auto && prefs.organization_label">
+              <p class="pl-[7.5rem] text-[11px] text-slate-400 dark:text-slate-500">Auto-detected from your sign-in domain.</p>
+            </template>
+            <template x-if="!prefs.organization_label">
+              <p class="pl-[7.5rem] text-[11px] text-slate-400 dark:text-slate-500">Will be auto-detected after the next scan.</p>
+            </template>
+          </div>
+          </section>
+        </div>
+      </aside>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>
