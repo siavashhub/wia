@@ -6,6 +6,7 @@ import json
 
 from sqlmodel import select
 
+from wia.core.categorization import infer_sources_from_label
 from wia.core.types import Confidence, Impact, TimeEntry, TimeEntryUpdate
 from wia.storage.db import get_session
 from wia.storage.models import TimeEntryRow
@@ -22,6 +23,12 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
         impact = Impact(row.impact) if row.impact else Impact.MEDIUM
     except ValueError:
         impact = Impact.MEDIUM
+    sources = [s for s in (row.sources or "").split(",") if s]
+    if not sources and not row.manual:
+        # Backfill rows that pre-date the ``sources`` column with a
+        # best-guess from the label so the UI shows *some* tag. Manual
+        # rows already get ``["manual"]`` at create-time; don't override.
+        sources = infer_sources_from_label(row.label, row.category)
     return TimeEntry(
         id=row.id,
         label=row.label,
@@ -34,7 +41,7 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
         daily_hours=daily,
         notes=row.notes or "",
         manual=bool(row.manual),
-        sources=[s for s in (row.sources or "").split(",") if s],
+        sources=sources,
     )
 
 

@@ -4,6 +4,7 @@ from wia.core.categorization import (
     aggregate_entries,
     categorize,
     default_impact_for_category,
+    infer_sources_from_label,
 )
 from wia.core.types import ActivityBlock, Confidence, Impact, Source
 
@@ -68,6 +69,43 @@ def test_aggregate_collects_signal_sources_per_entry():
     assert standup.sources == ["calendar", "teams"]
     solo = next(e for k, e in by_label.items() if "Solo focus" in k)
     assert solo.sources == ["inferred"]
+
+
+def test_aggregate_picks_up_merged_sources_metadata():
+    """If a block carries ``metadata["merged_sources"]`` (set by
+    ``dedup_across_sources`` when it folds Teams/email duplicates into a
+    Calendar winner), those extras must flow into the entry's source set."""
+    blk = _b("ALZ sync", source=Source.CALENDAR, hours=1.0)
+    blk.metadata["merged_sources"] = "teams,email"
+    entries = aggregate_entries([blk])
+    assert len(entries) == 1
+    assert entries[0].sources == ["calendar", "email", "teams"]
+
+
+def test_infer_sources_from_label_email_prefix():
+    assert infer_sources_from_label("Re: ALZ Assessment") == ["email"]
+    assert infer_sources_from_label("FW: TD Win Wire") == ["email"]
+    assert infer_sources_from_label("Fwd: Onboarding") == ["email"]
+    # ``Category - …`` prefix must be stripped before checking.
+    assert infer_sources_from_label("Service – Re: TD Win Wire") == ["email"]
+
+
+def test_infer_sources_from_label_chat():
+    assert infer_sources_from_label("Chat with Ashton Fernandes") == ["teams"]
+    assert infer_sources_from_label("Other – Chat with Ashton (sync)") == ["teams"]
+
+
+def test_infer_sources_from_label_defaults_to_unknown():
+    # No prefix, no "Chat with" — we don't try to guess calendar; show a
+    # neutral "unknown" placeholder until a rescan fills it in.
+    assert infer_sources_from_label("Standup") == ["unknown"]
+    assert infer_sources_from_label("Customer – CTC - AVS ANF") == ["unknown"]
+
+
+def test_infer_sources_from_label_empty():
+    assert infer_sources_from_label("") == []
+    assert infer_sources_from_label(None) == []
+    assert infer_sources_from_label("", "") == []
 
 
 def test_default_impact_internal_admin_low():

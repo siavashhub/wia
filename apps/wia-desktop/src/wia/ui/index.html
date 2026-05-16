@@ -447,9 +447,6 @@
                         <template x-if="row.kind === 'sub'">
                           <div class="flex flex-wrap items-center gap-1.5">
                             <input class="min-w-[12rem] flex-1 bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
-                            <template x-if="row.entry.manual">
-                              <span title="Manual entry — added by you" class="inline-flex items-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">manual</span>
-                            </template>
                             <template x-for="src in (row.entry.sources || [])" :key="'src-' + row.entry.id + '-' + src">
                               <span
                                 :class="sourceBadgeClass(src)"

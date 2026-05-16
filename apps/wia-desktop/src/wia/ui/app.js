@@ -464,6 +464,9 @@ function wia() {
           return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
         case 'manual':
           return 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300';
+        case 'unknown':
+          // Dashed border + muted gray signals "placeholder, will be replaced".
+          return 'bg-slate-50 text-slate-500 ring-1 ring-dashed ring-slate-300 dark:bg-slate-900/40 dark:text-slate-400 dark:ring-slate-700';
         default:
           return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
       }
@@ -475,6 +478,7 @@ function wia() {
         case 'email': return 'envelope';
         case 'inferred': return 'light-bulb';
         case 'manual': return 'pencil-square';
+        case 'unknown': return 'question-mark-circle';
         default: return 'queue-list';
       }
     },
@@ -485,6 +489,7 @@ function wia() {
         case 'email': return 'Email';
         case 'inferred': return 'Inferred';
         case 'manual': return 'Manual';
+        case 'unknown': return 'Unknown';
         default: return src;
       }
     },
@@ -495,6 +500,7 @@ function wia() {
         case 'email': return 'Signal: Outlook email thread';
         case 'inferred': return 'Signal: inferred (gap-fill / heuristic)';
         case 'manual': return 'Signal: manual entry added by you';
+        case 'unknown': return 'Signal: unknown — placeholder for entries from before WIA tracked sources. A rescan will replace this with the real signal.';
         default: return 'Signal: ' + src;
       }
     },

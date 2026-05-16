@@ -120,18 +120,33 @@ def dedup_across_sources(
     dropped = 0
     for cand in ordered:
         norm = _normalize_title(cand.title)
-        is_dup = False
+        winner: ActivityBlock | None = None
         for k in kept:
             if _SOURCE_PRIORITY.get(k.source, 0) < _SOURCE_PRIORITY.get(cand.source, 0):
                 continue
             if norm and norm == _normalize_title(k.title):
-                is_dup = True
+                winner = k
                 break
             if _temporal_overlap(cand, k) >= overlap_threshold:
-                # Same time window from a lower-priority signal — drop.
-                is_dup = True
+                winner = k
                 break
-        if is_dup:
+        if winner is not None:
+            # The candidate represents the same activity as ``winner`` from a
+            # lower-priority signal. Drop it from the timeline (so we don't
+            # double-count the hours) but record its source on the winner so
+            # the Briefing UI can still show that the activity was *also*
+            # surfaced by Teams / email / etc.
+            extras: set[str] = set()
+            existing = winner.metadata.get("merged_sources", "")
+            if existing:
+                extras.update(s for s in existing.split(",") if s)
+            extras.add(cand.source.value)
+            cand_extras = cand.metadata.get("merged_sources", "")
+            if cand_extras:
+                extras.update(s for s in cand_extras.split(",") if s)
+            # Don't list the winner's own source as an "extra".
+            extras.discard(winner.source.value)
+            winner.metadata["merged_sources"] = ",".join(sorted(extras))
             dropped += 1
             continue
         kept.append(cand)

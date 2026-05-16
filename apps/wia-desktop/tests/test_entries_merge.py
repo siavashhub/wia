@@ -329,3 +329,74 @@ def test_merge_unions_signal_sources():
     assert len(rows) == 1
     persisted = sorted(s for s in rows[0].sources.split(",") if s)
     assert persisted == ["calendar", "email", "teams"]
+
+
+def test_list_entries_backfills_empty_sources_with_heuristic():
+    """Rows persisted before the ``sources`` column existed have an empty
+    ``sources`` field. Reading them should fall back to the label-based
+    heuristic so the UI always shows *some* provenance tag."""
+    with get_session() as s:
+        for row in (
+            TimeEntryRow(
+                label="Service – Re: TD Win Wire",
+                category="Service",
+                duration_hours=0.5,
+                confidence="medium",
+                impact="medium",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                sources="",
+            ),
+            TimeEntryRow(
+                label="Other – Chat with Ashton",
+                category="Other",
+                duration_hours=0.5,
+                confidence="medium",
+                impact="medium",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                sources="",
+            ),
+            TimeEntryRow(
+                label="Customer – CTC - AVS ANF",
+                category="Customer",
+                duration_hours=1.0,
+                confidence="high",
+                impact="high",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                sources="",
+            ),
+        ):
+            s.add(row)
+        s.commit()
+    entries = {e.label: e.sources for e in entries_repo.list_entries(week_of=WEEK)}
+    assert entries["Service – Re: TD Win Wire"] == ["email"]
+    assert entries["Other – Chat with Ashton"] == ["teams"]
+    assert entries["Customer – CTC - AVS ANF"] == ["unknown"]
+
+
+def test_list_entries_does_not_backfill_manual_rows_without_sources():
+    """Manual rows always carry ``[\"manual\"]``; an empty ``sources`` column\n    is a data-integrity issue but we must not invent a calendar/unknown\n    tag for a row the user explicitly marked manual."""
+    with get_session() as s:
+        s.add(
+            TimeEntryRow(
+                label="Hand-added",
+                category="Customer",
+                duration_hours=1.0,
+                confidence="high",
+                impact="medium",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                manual=True,
+                sources="",
+            )
+        )
+        s.commit()
+    [entry] = entries_repo.list_entries(week_of=WEEK)
+    assert entry.manual is True
+    assert entry.sources == []

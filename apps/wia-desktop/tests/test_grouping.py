@@ -78,6 +78,21 @@ def test_dedup_drops_lower_priority_with_temporal_overlap():
     assert out[0].source is Source.CALENDAR
 
 
+def test_dedup_propagates_dropped_source_onto_winner():
+    """When Teams/email duplicates a calendar meeting, the kept calendar
+    block must record the dropped sources in ``metadata["merged_sources"]``
+    so the Briefing UI can still show Teams/Email provenance pills."""
+    cal = _b(10, 11, "ALZ Assessment", source=Source.CALENDAR)
+    teams = _b(10, 11, "alz assessment", source=Source.TEAMS)
+    email = _b(10, 11, "Re: ALZ Assessment", source=Source.EMAIL)
+    out = dedup_across_sources([cal, teams, email])
+    assert len(out) == 1
+    winner = out[0]
+    assert winner.source is Source.CALENDAR
+    extras = sorted(s for s in winner.metadata.get("merged_sources", "").split(",") if s)
+    assert extras == ["email", "teams"]
+
+
 # --- clamping ---
 
 

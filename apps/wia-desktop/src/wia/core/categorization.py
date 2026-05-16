@@ -179,6 +179,60 @@ def categorize(
     return label, category
 
 
+def _collect_sources(group: list[ActivityBlock]) -> list[str]:
+    """Return the deduped sorted set of signal sources behind ``group``.
+
+    Includes both each block's primary ``source`` and any extras recorded in
+    ``metadata["merged_sources"]`` by :func:`dedup_across_sources` — that way
+    a meeting that was deduped from Teams/email into a Calendar block still
+    shows the Teams/email provenance tag in the Briefing UI.
+    """
+    sources: set[str] = set()
+    for b in group:
+        sources.add(b.source.value)
+        extras = b.metadata.get("merged_sources", "")
+        if extras:
+            sources.update(s for s in extras.split(",") if s)
+    return sorted(sources)
+
+
+# --- Read-time fallback for entries that pre-date the ``sources`` column ---
+_EMAIL_PREFIX_RE = re.compile(r"^\s*(re|fw|fwd)\s*:", re.IGNORECASE)
+_CHAT_RE = re.compile(r"\bchat with\b", re.IGNORECASE)
+
+
+def infer_sources_from_label(label: str | None, category: str | None = None) -> list[str]:
+    """Best-effort guess of an entry's signal sources from its label.
+
+    Rows persisted before WIA tracked ``sources`` carry no provenance tags.
+    Rather than show an empty cell in the Briefing UI we apply a small,
+    conservative heuristic so the user always sees *something*. A real
+    rescan overwrites the guess with the actual deduped source set.
+
+    Rules (checked in order):
+
+    - ``Re:`` / ``Fw:`` / ``Fwd:`` prefix → ``["email"]``
+    - contains ``Chat with …``           → ``["teams"]``
+    - otherwise                          → ``["unknown"]``
+
+    The ``unknown`` placeholder is deliberately distinct from a real source
+    so the UI can style it as a low-confidence hint and so a future rescan
+    will always replace it.
+    """
+    # Strip any "Category - " prefix added by ``categorize``; the heuristic
+    # should match the original event title, not the bucket name.
+    text = (label or "").strip()
+    if " – " in text:
+        text = text.split(" – ", 1)[1].strip()
+    if not text and not (category or "").strip():
+        return []
+    if _EMAIL_PREFIX_RE.search(text):
+        return ["email"]
+    if _CHAT_RE.search(text):
+        return ["teams"]
+    return ["unknown"]
+
+
 def aggregate_entries(
     blocks: list[ActivityBlock],
     *,
@@ -279,7 +333,7 @@ def aggregate_entries(
                 impact=impact,
                 source_block_ids=[b.id for b in group if b.id is not None],
                 daily_hours={k: round(v, 2) for k, v in daily.items()},
-                sources=sorted({b.source.value for b in group}),
+                sources=_collect_sources(group),
             )
         )
 
