@@ -456,6 +456,25 @@ function wia() {
       }
     },
 
+    // Compact 3-dot impact picker: each dot is a click target that sets
+    // that level directly. Active dot is filled with the level's colour;
+    // inactive dots are outlined and dim. Saves ~75px per row vs. the
+    // old labelled segmented control while keeping one-click selection.
+    impactDotClass(value, current) {
+      const active = (current || 'medium') === value;
+      if (!active) {
+        return 'border border-slate-300 bg-transparent hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700';
+      }
+      switch (value) {
+        case 'high':
+          return 'bg-amber-500 ring-2 ring-amber-200 dark:bg-amber-500 dark:ring-amber-900';
+        case 'low':
+          return 'bg-slate-400 ring-2 ring-slate-200 dark:bg-slate-500 dark:ring-slate-700';
+        default:
+          return 'bg-indigo-500 ring-2 ring-indigo-200 dark:bg-indigo-500 dark:ring-indigo-900';
+      }
+    },
+
     // ---- Signal-source badges -------------------------------------------
     // Map the source tags persisted on each entry (`calendar`, `teams`,
     // `email`, `inferred`, `manual`) to a small pill with an icon. Surfaces
@@ -800,36 +819,70 @@ function wia() {
     },
 
     // ---- Grouping --------------------------------------------------------
+    // Aggressive category normalizer: strips hidden format/control chars
+    // (zero-width spaces, BOM, bidi marks, ASCII control codes), folds
+    // Unicode compatibility forms, collapses internal whitespace, and
+    // trims. Without this, two visually identical category strings can
+    // sort apart because one has e.g. a leading U+200B (zero-width
+    // space, code point higher than 'z'), making it sort *after* "W"
+    // categories instead of "C".
+    _normalizeCategory(raw) {
+      if (raw == null) return 'Uncategorized';
+      let s = String(raw);
+      // NFKC fold: collapses compatibility variants (full-width forms etc.).
+      try { s = s.normalize('NFKC'); } catch (_) { /* legacy engines */ }
+      // Strip C0/C1 control codes and Unicode format chars (Cf):
+      // \u200B-\u200F, \u2028-\u202F, \u2060-\u206F, \uFEFF.
+      s = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]/g, '');
+      // Collapse any run of whitespace (incl. NBSP U+00A0) into a single space.
+      s = s.replace(/[\s\u00A0]+/g, ' ').trim();
+      return s || 'Uncategorized';
+    },
+
     groupedEntries() {
       const entries = this.briefing?.entries || [];
-      const map = new Map();
+      // Normalize category keys so "Admin", "admin", "Admin ", and
+      // "\u200BAdmin" all collapse into a single group with a single
+      // display label — otherwise the table renders duplicates and the
+      // sort comparator can't establish a total order between them.
+      const map = new Map(); // normLower -> { display, items[] }
       for (const e of entries) {
-        const key = e.category || 'Uncategorized';
-        if (!map.has(key)) map.set(key, []);
-        map.get(key).push(e);
+        const cleaned = this._normalizeCategory(e.category);
+        const norm = cleaned.toLowerCase();
+        if (!map.has(norm)) map.set(norm, { display: cleaned, items: [] });
+        map.get(norm).items.push(e);
       }
       const groups = [];
-      for (const [category, items] of map.entries()) {
+      for (const [norm, { display, items }] of map.entries()) {
         const daily = {};
         for (let i = 0; i < 7; i++) {
           const iso = this.dayIso(i);
           daily[iso] = items.reduce((s, e) => s + ((e.daily_hours || {})[iso] || 0), 0);
         }
         const total = items.reduce((s, e) => s + (e.duration_hours || 0), 0);
-        groups.push({ category, entries: items, daily, total });
+        groups.push({ category: display, _sortKey: norm, entries: items, daily, total });
       }
       // Sort categories using the user's chosen key. Default is
-      // alphabetical so deletes / impact edits don't re-rank groups
+      // alphabetical so deletes / hour edits don't re-rank groups
       // mid-action; the user can opt into totals-descending by clicking
-      // the Total header.
+      // the Total header. We compare on the normalized lowercase key
+      // with a deterministic tie-breaker so the order is stable across
+      // re-renders (no shuffle when an unrelated field changes).
       const { key, dir } = this.groupSort || { key: 'category', dir: 'asc' };
       const sign = dir === 'desc' ? -1 : 1;
+      const tieBreak = (a, b) => (a._sortKey < b._sortKey ? -1 : a._sortKey > b._sortKey ? 1 : 0);
       if (key === 'total') {
-        groups.sort((a, b) => sign * (a.total - b.total));
+        groups.sort((a, b) => {
+          // Round to cents so floating-point drift between optimistic
+          // local sums and server-rounded values doesn't flip order.
+          const at = Math.round((a.total || 0) * 100);
+          const bt = Math.round((b.total || 0) * 100);
+          if (at !== bt) return sign * (at - bt);
+          // Equal totals -> stable alphabetical fallback (not flipped).
+          return tieBreak(a, b);
+        });
       } else {
-        groups.sort((a, b) =>
-          sign * String(a.category).localeCompare(String(b.category), undefined, { sensitivity: 'base' })
-        );
+        groups.sort((a, b) => sign * tieBreak(a, b));
       }
       return groups;
     },
@@ -854,16 +907,30 @@ function wia() {
       // Returns the visible rows for a group: always the summary row, plus
       // each entry as a sub-row when the group is expanded. When the user
       // has opened the notes editor for an entry, a notes row trails it.
-      const rows = [{ kind: 'group', key: `g:${group.category}` }];
+      const rows = [{ kind: 'group', key: `g:${group.category}`, group }];
       if (this.expanded[group.category]) {
         for (const entry of group.entries) {
-          rows.push({ kind: 'sub', key: `e:${entry.id}`, entry });
+          rows.push({ kind: 'sub', key: `e:${entry.id}`, entry, group });
           if (this.notesOpen[entry.id]) {
-            rows.push({ kind: 'notes', key: `n:${entry.id}`, entry });
+            rows.push({ kind: 'notes', key: `n:${entry.id}`, entry, group });
           }
         }
       }
       return rows;
+    },
+
+    // Flattened row list across all groups. Used by the table so we can
+    // iterate with a SINGLE x-for and avoid Alpine's nested-x-for DOM
+    // reconciliation bug, where the outer loop reorders but the inner
+    // template's <tr> siblings don't move together — which manifested
+    // as the visible table showing a different group order than the
+    // (correctly sorted) groupedEntries() result.
+    flatTableRows() {
+      const out = [];
+      for (const g of this.groupedEntries()) {
+        for (const r of this.groupRows(g)) out.push(r);
+      }
+      return out;
     },
 
     toggleGroup(category) {
@@ -920,6 +987,118 @@ function wia() {
           body: JSON.stringify({ label: entry.label, category: entry.category, duration_hours: entry.duration_hours }),
         });
       } catch (e) { this.error = String(e); }
+    },
+
+    // ---- Inline hour editing --------------------------------------------
+    // Per-entry debounce timers + pre-edit snapshots so we can coalesce
+    // rapid stepper clicks into a single PATCH and roll back on failure.
+    _dailySaveTimers: {},
+    _dailySnapshots: {},
+
+    adjustEntryDaily(entry, dayIndex, deltaHours) {
+      if (!entry) return;
+      const iso = this.dayIso(dayIndex);
+      const current = Number((entry.daily_hours || {})[iso]) || 0;
+      const next = Math.max(0, Math.round((current + deltaHours) * 100) / 100);
+      if (next === current) return;
+      // Snapshot once per debounce window so rollback restores the
+      // pre-burst value, not an intermediate step.
+      if (this._dailySnapshots[entry.id] === undefined) {
+        this._dailySnapshots[entry.id] = {
+          daily_hours: { ...(entry.daily_hours || {}) },
+          duration_hours: entry.duration_hours,
+        };
+      }
+      const updated = { ...(entry.daily_hours || {}) };
+      if (next > 0) updated[iso] = next; else delete updated[iso];
+      const newDuration = Object.values(updated).reduce((s, v) => s + (Number(v) || 0), 0);
+      entry.daily_hours = updated;
+      entry.duration_hours = Math.round(newDuration * 10000) / 10000;
+      // Debounce the network save.
+      const id = entry.id;
+      if (this._dailySaveTimers[id]) clearTimeout(this._dailySaveTimers[id]);
+      this._dailySaveTimers[id] = setTimeout(() => {
+        delete this._dailySaveTimers[id];
+        this._flushEntryDaily(entry);
+      }, 300);
+    },
+
+    async _flushEntryDaily(entry) {
+      if (!entry || entry.id == null) return;
+      const snapshot = this._dailySnapshots[entry.id];
+      delete this._dailySnapshots[entry.id];
+      try {
+        const r = await fetch(`/api/entries/${entry.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ daily_hours: entry.daily_hours || {} }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const saved = await r.json();
+        // Trust the server's authoritative values (rounding, server-side
+        // duration recompute) — but only if the user hasn't clicked again
+        // in the meantime (which would have re-snapshotted).
+        if (this._dailySnapshots[entry.id] === undefined) {
+          entry.daily_hours = saved.daily_hours || entry.daily_hours;
+          entry.duration_hours = saved.duration_hours ?? entry.duration_hours;
+        }
+      } catch (e) {
+        if (snapshot) {
+          entry.daily_hours = snapshot.daily_hours;
+          entry.duration_hours = snapshot.duration_hours;
+        }
+        this.error = `Save hours failed: ${e}`;
+      }
+    },
+
+    // ---- Live totals & top work areas ------------------------------------
+    // Re-derived from ``briefing.entries`` so they stay in sync with local
+    // edits (delete, hours change, etc.) without waiting for a server
+    // refetch. Mirrors ``_totals_from_entries`` / ``_top_work_areas`` in
+    // core/orchestrator.py so a freshly loaded briefing renders the same
+    // numbers the server computed.
+    liveTotals() {
+      const entries = (this.briefing && this.briefing.entries) || [];
+      let meetings = 0, collab = 0, focus = 0, total = 0;
+      for (const e of entries) {
+        const h = Number(e.duration_hours) || 0;
+        total += h;
+        if (e.confidence === 'high') meetings += h;
+        else if (e.confidence === 'medium') collab += h;
+        if ((e.label || '').toLowerCase().startsWith('focus')) focus += h;
+      }
+      const r = (n) => Math.round(n * 100) / 100;
+      return {
+        total_hours: r(total),
+        meetings_hours: r(meetings),
+        focus_hours: r(focus),
+        collaboration_hours: r(collab),
+      };
+    },
+
+    liveTopWorkAreas(limit = 5) {
+      const entries = (this.briefing && this.briefing.entries) || [];
+      // Same normalization as groupedEntries() so the chips match the
+      // table groups even when raw categories differ only in case or
+      // surrounding whitespace.
+      const by = new Map(); // norm -> { display, hours }
+      for (const e of entries) {
+        const raw = (e.category == null ? '' : String(e.category)).trim() || 'Uncategorized';
+        const norm = raw.toLocaleLowerCase();
+        const slot = by.get(norm) || { display: raw, hours: 0 };
+        slot.hours += Number(e.duration_hours) || 0;
+        by.set(norm, slot);
+      }
+      return Array.from(by.values())
+        .map(({ display, hours }) => ({ label: display, hours: Math.round(hours * 100) / 100 }))
+        .sort((a, b) => {
+          const d = b.hours - a.hours;
+          if (d !== 0) return d;
+          // Deterministic tie-break so chips don't reshuffle when an
+          // edit makes two areas tie on hours.
+          return a.label.toLocaleLowerCase() < b.label.toLocaleLowerCase() ? -1 : 1;
+        })
+        .slice(0, limit);
     },
 
     // ---- Notes ----------------------------------------------------------
