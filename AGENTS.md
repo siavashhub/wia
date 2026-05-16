@@ -43,8 +43,9 @@ Linux/macOS-only assumptions in runtime code.
 - Add tests in `apps/wia-desktop/tests/` for any change in `core`, `api`, or
   `storage`. Mock all network and MCP I/O.
 - Don't log user content (calendar, email, briefings) above DEBUG level.
-- When cutting a release: bump `version.json` and `installer/wia.iss` together,
-  then push a `vX.Y.Z` tag — `release.yml` does the rest.
+- When cutting a release: just push a `vX.Y.Z` git tag. The tag is the single
+  source of truth — `release.yml` stamps `version.json` and passes the version
+  to Inno Setup. Do not bump `version.json` or `installer/wia.iss` manually.
 
 ## What not to do
 
