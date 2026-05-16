@@ -66,7 +66,8 @@ short and factual.
 ## Pull request etiquette
 
 - Keep PRs focused; update `docs/` when behavior or architecture changes.
-- Bump `version.json` and `installer/wia.iss`'s `MyAppVersion` together when
-  cutting a release; `release.yml` reads the version from the `v*` tag.
+- To cut a release, just push a `vX.Y.Z` git tag. The tag is the single source
+  of truth: `release.yml` stamps `version.json` and passes the version to
+  Inno Setup. Do not bump `version.json` or `installer/wia.iss` by hand.
 - Reference the originating issue and include a manual-test note for desktop
   changes (the agent cannot launch a WebView2 window in CI).

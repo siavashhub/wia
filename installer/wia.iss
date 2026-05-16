@@ -3,8 +3,12 @@
 ; Expects PyInstaller output at dist\wia-desktop\
 
 #define MyAppName "WIA"
+; MyAppVersion is provided by release.yml via `iscc /DMyAppVersion=...`.
+; The fallback below is a dev sentinel so local `iscc installer\wia.iss`
+; runs produce an obviously-unreleased installer instead of a misleading
+; real version number. Do not bump this for releases.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.0.0-dev"
 #endif
 #define MyAppPublisher "WIA contributors"
 #define MyAppExeName "wia-desktop.exe"

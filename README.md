@@ -144,7 +144,7 @@ apps/wia-desktop/         # the desktop app (FastAPI + pywebview + MCP)
   pyinstaller.spec        # PyInstaller build config
 docs/                     # ARCHITECTURE, AUTH, ROADMAP, COPILOT_*
 installer/wia.iss         # Inno Setup script (driven by release.yml)
-version.json              # release version source of truth
+version.json              # dev-mode default version (release version comes from the git tag)
 ```
 
 ## Privacy & security
@@ -182,7 +182,7 @@ $env:WIA_LOG_LEVEL = "DEBUG"; uv run wia-desktop
 
 ## Releasing
 
-Bump `version.json` and `installer/wia.iss`'s `MyAppVersion` together, commit, then push a `vX.Y.Z` tag. GitHub Actions (`release.yml`) builds the PyInstaller bundle, runs Inno Setup, and uploads `wia-setup-<version>.exe` to the release.
+The git tag is the single source of truth for release versions. Push a `vX.Y.Z` tag and GitHub Actions (`release.yml`) will stamp `version.json`, build the PyInstaller bundle, run Inno Setup with `MyAppVersion=X.Y.Z`, and upload `wia-setup-<version>.exe` to the release. The committed `version.json` stays at `0.0.0-dev` and only affects local `uv run wia-desktop` invocations.
 
 ## Roadmap
 

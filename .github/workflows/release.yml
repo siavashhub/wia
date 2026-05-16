@@ -43,6 +43,18 @@ jobs:
           "version=$version"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Building $tag (version=$version)"
 
+      - name: Stamp version.json from tag
+        # The git tag is the single source of truth for release versions.
+        # Overwrite the committed version.json so the frozen exe and any
+        # runtime callers of wia.__version__ report the tagged version.
+        shell: pwsh
+        run: |
+          $path = "version.json"
+          $data = Get-Content $path -Raw | ConvertFrom-Json
+          $data.version = "${{ steps.resolve.outputs.version }}"
+          ($data | ConvertTo-Json -Depth 10) | Set-Content -Path $path -Encoding UTF8
+          Get-Content $path
+
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
