@@ -55,7 +55,7 @@ jobs:
           ($data | ConvertTo-Json -Depth 10) | Set-Content -Path $path -Encoding UTF8
           Get-Content $path
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
