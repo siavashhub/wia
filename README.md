@@ -156,6 +156,30 @@ version.json              # release version source of truth
 - The SQLite DB at `%LOCALAPPDATA%\WIA\WIA\wia.db` is user-private.
 - CodeQL + Dependency Review run on every PR.
 
+## Logs & troubleshooting
+
+WIA writes a rotating log file to make support and self-diagnosis possible:
+
+- **Location:** `%LOCALAPPDATA%\WIA\WIA\logs\wia.log`
+- **Rotation:** daily at midnight (local time), 30 days retained (`wia.log`, `wia.log.2026-05-15`, …).
+- **Default level:** `INFO`. User content (calendar, email, briefing rows) is only written at `DEBUG`.
+- **Inspect from the app:** `GET http://127.0.0.1:<port>/api/health/logs` returns the active log file path, level, and retention.
+
+Override via environment variables (all prefixed `WIA_`):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WIA_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. `DEBUG` includes user content — share carefully. |
+| `WIA_LOG_TO_FILE` | `1` | Set to `0` to disable file logging (console only). |
+| `WIA_LOG_RETENTION_DAYS` | `30` | Number of rotated daily files to keep. |
+| `WIA_LOG_DIR` | _(unset)_ | Override the log directory; defaults to `<data_dir>/logs`. |
+
+Enable verbose logs for one session:
+
+```pwsh
+$env:WIA_LOG_LEVEL = "DEBUG"; uv run wia-desktop
+```
+
 ## Releasing
 
 Bump `version.json` and `installer/wia.iss`'s `MyAppVersion` together, commit, then push a `vX.Y.Z` tag. GitHub Actions (`release.yml`) builds the PyInstaller bundle, runs Inno Setup, and uploads `wia-setup-<version>.exe` to the release.
