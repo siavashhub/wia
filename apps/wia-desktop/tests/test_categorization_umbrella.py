@@ -34,7 +34,7 @@ def _b(title, *, categories_display=None, participants=(), hours=1.0):
 
 
 def test_extract_first_segment_for_dash_separator():
-    assert _extract_category_from_title("Contoso- Azure Landing Zone ANF") == "Contoso"
+    assert _extract_category_from_title("Contoso- Azure Landing Zone vWAN") == "Contoso"
 
 
 def test_extract_first_segment_for_endash_separator():
@@ -73,11 +73,11 @@ def test_extract_rejects_overlong_segment():
 
 
 def test_umbrella_customer_extracts_specific_code_from_title():
-    block = _b("Contoso- Azure Landing Zone ANF", categories_display="Customer")
+    block = _b("Contoso- Azure Landing Zone vWAN", categories_display="Customer")
     label, cat = categorize(block, umbrella_categories=["Customer"])
     assert cat == "Contoso"
     # Label should not double-up the category name.
-    assert label == "Contoso\u2013 Contoso- Azure Landing Zone ANF" or label == "Contoso- Azure Landing Zone ANF"
+    assert label == "Contoso\u2013 Contoso- Azure Landing Zone vWAN" or label == "Contoso- Azure Landing Zone vWAN"
 
 
 def test_umbrella_customer_extracts_td_from_title():
@@ -94,7 +94,7 @@ def test_non_umbrella_category_is_used_verbatim():
 
 
 def test_umbrella_match_is_case_insensitive():
-    block = _b("Contoso- Azure Landing Zone ANF", categories_display="customer")
+    block = _b("Contoso- Azure Landing Zone vWAN", categories_display="customer")
     _label, cat = categorize(block, umbrella_categories=["Customer"])
     assert cat == "Contoso"
 
@@ -132,7 +132,7 @@ def test_no_umbrellas_configured_uses_outlook_tag_verbatim():
 
 def test_aggregate_groups_separately_by_extracted_code():
     blocks = [
-        _b("Contoso- Azure Landing Zone ANF", categories_display="Customer"),
+        _b("Contoso- Azure Landing Zone vWAN", categories_display="Customer"),
         _b("Contoso- migration", categories_display="Customer"),
         _b("Fabrikam- KO", categories_display="Customer"),
     ]

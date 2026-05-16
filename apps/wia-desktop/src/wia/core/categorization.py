@@ -133,6 +133,31 @@ def _is_internal_only_meeting(participants: Iterable[str], internal_domains: set
     return seen_any
 
 
+def _has_external_participant(participants: Iterable[str], internal_domains: set[str]) -> bool:
+    """True when at least one parseable participant belongs to a domain
+    *outside* ``internal_domains``.
+
+    Distinct from :func:`_is_internal_only_meeting`: an event with no
+    participants at all returns ``False`` here (no external attendees
+    were seen), which is what the step (2) Outlook-tag collapse uses
+    to also catch appointment-style blocks with an Outlook category
+    but no attendees.
+
+    Returns ``True`` conservatively when ``internal_domains`` is empty,
+    so the caller doesn't collapse tags in the (rare) case where we
+    can't classify any domain yet.
+    """
+    if not internal_domains:
+        return True
+    for email in participants:
+        m = re.search(r"@([^>\s]+)", email)
+        if not m:
+            continue
+        if m.group(1).lower() not in internal_domains:
+            return True
+    return False
+
+
 def _outlook_category_hint(block: ActivityBlock) -> str | None:
     """Return the first Outlook calendar category set on ``block`` (display
     casing), or ``None`` if the block has no categories.
@@ -238,12 +263,13 @@ def categorize(
        derive a *more specific* category from the title prefix; the raw
        umbrella name is only used as a last-resort fallback so a generic
        ``Customer`` tag doesn't collapse every customer into one bucket.
-       When the meeting is internal-only and the tag is NOT in
-       ``preserve_categories``, the tag is dropped so the event falls
-       through to step (5) and lands in ``Internal`` \u2014 this keeps
-       generic organising tags like ``Workshop`` / ``Service`` from
-       creating one-off buckets. Tags listed in ``preserve_categories``
-       always pass through verbatim.
+       When the meeting has no external attendees (either internal-only
+       or an appointment-style block with no attendees at all) and the
+       tag is NOT in ``preserve_categories``, the tag is replaced with
+       ``Internal`` \u2014 this keeps generic organising tags like
+       ``Workshop`` / ``Service`` / ``Messages`` from creating one-off
+       buckets. Tags listed in ``preserve_categories`` always pass
+       through verbatim.
     3. External participant domain \u2192 derived client name.
     4. Title keyword map (sprint/standup/interview/...).
     5. All-internal participants → ``Internal`` (all-hands, team syncs,
@@ -296,14 +322,16 @@ def categorize(
     elif (
         category is not None
         and category.strip().lower() not in preserve_set
-        and _is_internal_only_meeting(block.participants, internal_domains)
+        and not _has_external_participant(block.participants, internal_domains)
     ):
-        # Plain Outlook tag on an internal-only meeting — by default
-        # we collapse to ``Internal`` (step 5) so generic organising
-        # tags like ``Workshop`` / ``Service`` don't spawn one-off
-        # buckets. The user can opt specific tags out via the
-        # ``preserve_calendar_categories`` pref.
-        category = None
+        # Outlook tag on a meeting with no external attendees — either
+        # internal-only or an appointment-style block with no attendees
+        # at all. Collapse to ``Internal`` by default so generic
+        # organising tags like ``Workshop`` / ``Service`` /
+        # ``Messages`` don't spawn one-off buckets. The user can opt
+        # specific tags out via the ``preserve_calendar_categories``
+        # pref.
+        category = "Internal"
 
     if category is None:
         # (3) Client from external participants.

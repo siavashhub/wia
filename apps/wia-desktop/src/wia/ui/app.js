@@ -26,6 +26,13 @@ function wia() {
     identityLoading: false,
     enabling: false,
     briefing: null,
+    // Entries from the previous Monday-week, fetched only when the user
+    // has chosen Sunday-anchored display. The current display window
+    // (Sun..Sat) spans two Monday-weeks: the Sunday cell lives in the
+    // *previous* Mon-week's data. We merge these into the rendered
+    // entries so the Sunday column isn't perpetually empty. Backend
+    // storage stays Monday-anchored — this is a render-time join only.
+    prevWeekEntries: [],
     loading: false,           // any briefing fetch in flight (cache or scan)
     scanningBriefing: false,  // a background scan (refresh=true) is running
     scanningWeekIso: null,    // which Monday-week the scan is targeting
@@ -137,7 +144,13 @@ function wia() {
     },
 
     // ---- UI state helpers ------------------------------------------------
-    hasEntries() { return !!(this.briefing && this.briefing.entries && this.briefing.entries.length); },
+    hasEntries() {
+      // Treat the displayed table window as the source of truth so the
+      // table renders in Sunday mode even when the current Mon-week is
+      // empty but the prior Mon-week's Sunday has hours.
+      if (this.briefing && this.briefing.entries && this.briefing.entries.length) return true;
+      return this._displayEntries().length > 0;
+    },
 
     // True before we've ever received a briefing payload (first paint).
     bootingBriefing() { return this.briefing === null; },
@@ -210,8 +223,12 @@ function wia() {
 
     async setWeekStartsOn(value) {
       // UI-only preference: backend ``week_of`` stays Monday-anchored, only
-      // the rendered column order changes.
+      // the rendered column order changes. In Sunday mode we additionally
+      // merge the previous Monday-week's entries at render time so the
+      // Sunday column has data — that requires re-running the briefing
+      // load (or clearing the sidecar when switching back to Monday).
       if (value !== 'mon' && value !== 'sun') return;
+      const prev = this.prefs.week_starts_on;
       this.prefs.week_starts_on = value;
       try {
         const r = await fetch('/api/prefs', {
@@ -221,6 +238,10 @@ function wia() {
         });
         if (!r.ok) throw new Error(await r.text());
         this.prefs = await r.json();
+        if (prev !== value) {
+          if (value === 'mon') this.prevWeekEntries = [];
+          await this.loadBriefing(false);
+        }
       } catch (e) { this.error = `Save week start failed: ${e}`; }
     },
 
@@ -668,12 +689,12 @@ function wia() {
       return `${y}-${mm}-${dd}`;
     },
 
-    // Map a column index (0..6) to days-from-Monday (0..6). When the user
-    // prefers Sunday-start, column 0 is Sunday (= Monday + 6 days), columns
-    // 1..6 are Mon..Sat. Otherwise it's just the identity.
+    // Map a column index (0..6) to days-from-Monday. When the user prefers
+    // Sunday-start, column 0 is Sunday (= Monday − 1 day), columns 1..6 are
+    // Mon..Sat. Otherwise (Monday-start) it's just the identity (0..6).
     dayOffset(i) {
       if (this.prefs.week_starts_on === 'sun') {
-        return i === 0 ? 6 : i - 1;
+        return i === 0 ? -1 : i - 1;
       }
       return i;
     },
@@ -788,18 +809,45 @@ function wia() {
       try {
         const params = new URLSearchParams();
         params.set('week_of', requestedWeek);
+        // In Sunday-display mode the visible week spans two Monday-weeks
+        // (Sunday cell = previous Mon-week's last day). Fetch both in
+        // parallel so the Sunday column reflects real data.
+        const prevPromise = this._loadPrevWeekEntries(requestedWeek);
         const r = await fetch(`/api/briefing?${params.toString()}`);
         if (!r.ok) throw new Error(await r.text());
         const payload = await r.json();
+        const prevEntries = await prevPromise;
         // Drop the result if the user has navigated to another week while
         // we were waiting for the cache lookup.
         if (this.weekStartIso(this.weekOffset) !== requestedWeek) return;
         this.briefing = payload;
+        this.prevWeekEntries = prevEntries;
         if (this.briefing.status === 'workiq-not-enabled') {
           await this.loadStatus();
         }
       } catch (e) { this.error = String(e); }
       finally { this.loading = false; }
+    },
+
+    // Fetch entries from the Monday-week immediately before ``currentMonday``
+    // so the Sunday cell of a Sunday-anchored display window has data to
+    // render. Returns [] in Monday mode, on error, or when the user has
+    // navigated away before the fetch resolved.
+    async _loadPrevWeekEntries(currentMonday) {
+      if ((this.prefs.week_starts_on || 'mon') !== 'sun') return [];
+      try {
+        const d = new Date(currentMonday + 'T00:00:00');
+        d.setDate(d.getDate() - 7);
+        const y = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const prevIso = `${y}-${mm}-${dd}`;
+        const params = new URLSearchParams({ week_of: prevIso });
+        const r = await fetch(`/api/briefing?${params.toString()}`);
+        if (!r.ok) return [];
+        const payload = await r.json();
+        return Array.isArray(payload?.entries) ? payload.entries : [];
+      } catch (_e) { return []; }
     },
 
     async _runBackgroundScan(weekIso) {
@@ -820,6 +868,9 @@ function wia() {
         // navigation back) will pick up the freshly persisted entries.
         if (this.weekStartIso(this.weekOffset) === weekIso) {
           this.briefing = payload;
+          // Refresh the prev-week sidecar too so the Sunday column reflects
+          // any data the scan persisted into the prior Mon-week.
+          this.prevWeekEntries = await this._loadPrevWeekEntries(weekIso);
           if (this.briefing.status === 'workiq-not-enabled') {
             this.error = 'Click "Enable Work IQ" to connect.';
             await this.loadStatus();
@@ -905,8 +956,50 @@ function wia() {
       return s || 'Uncategorized';
     },
 
+    // ---- Display entries (Option B: virtualized Sunday-start) ------------
+    // Returns the ISO dates of the 7 currently displayed columns, in order.
+    _displayIsoList() {
+      const out = new Array(7);
+      for (let i = 0; i < 7; i++) out[i] = this.dayIso(i);
+      return out;
+    },
+
+    // Entries to render in the table. In Monday-display mode this is just
+    // ``briefing.entries`` (storage is already Monday-anchored). In
+    // Sunday-display mode we additionally pull entries from the prior
+    // Monday-week so the Sunday cell isn't perpetually empty; we filter
+    // both lists to those that actually have hours in the visible window
+    // so the prior week's Mon..Sat rows don't leak into the table.
+    _displayEntries() {
+      const current = this.briefing?.entries || [];
+      if ((this.prefs.week_starts_on || 'mon') !== 'sun') return current;
+      const isoList = this._displayIsoList();
+      const hasVisibleHours = (e) => {
+        const dh = e.daily_hours || {};
+        for (const iso of isoList) if ((dh[iso] || 0) > 0) return true;
+        return false;
+      };
+      const out = [];
+      for (const e of current) out.push(e);
+      for (const e of (this.prevWeekEntries || [])) {
+        if (hasVisibleHours(e)) out.push(e);
+      }
+      return out;
+    },
+
+    // Sum of an entry's daily_hours over the visible 7-day window. In
+    // Monday-display mode this equals ``duration_hours`` for current-week
+    // entries; in Sunday mode it correctly reflects only the portion of
+    // the entry that lands in the displayed window.
+    entryDisplayTotal(entry) {
+      const dh = entry.daily_hours || {};
+      let total = 0;
+      for (const iso of this._displayIsoList()) total += dh[iso] || 0;
+      return total;
+    },
+
     groupedEntries() {
-      const entries = this.briefing?.entries || [];
+      const entries = this._displayEntries();
       // Normalize category keys so "Admin", "admin", "Admin ", and
       // "\u200BAdmin" all collapse into a single group with a single
       // display label — otherwise the table renders duplicates and the
@@ -921,11 +1014,13 @@ function wia() {
       const groups = [];
       for (const [norm, { display, items }] of map.entries()) {
         const daily = {};
+        let total = 0;
         for (let i = 0; i < 7; i++) {
           const iso = this.dayIso(i);
-          daily[iso] = items.reduce((s, e) => s + ((e.daily_hours || {})[iso] || 0), 0);
+          const v = items.reduce((s, e) => s + ((e.daily_hours || {})[iso] || 0), 0);
+          daily[iso] = v;
+          total += v;
         }
-        const total = items.reduce((s, e) => s + (e.duration_hours || 0), 0);
         groups.push({ category: display, _sortKey: norm, entries: items, daily, total });
       }
       // Sort categories using the user's chosen key. Default is
@@ -1023,16 +1118,20 @@ function wia() {
 
     dayTotal(i) {
       const iso = this.dayIso(i);
-      const total = (this.briefing?.entries || []).reduce(
+      const total = this._displayEntries().reduce(
         (sum, e) => sum + ((e.daily_hours || {})[iso] || 0), 0,
       );
       return this.hhmm(total);
     },
 
     weekTotal() {
-      const total = (this.briefing?.entries || []).reduce(
-        (sum, e) => sum + (e.duration_hours || 0), 0,
-      );
+      const entries = this._displayEntries();
+      const isoList = this._displayIsoList();
+      let total = 0;
+      for (const e of entries) {
+        const dh = e.daily_hours || {};
+        for (const iso of isoList) total += dh[iso] || 0;
+      }
       return this.hhmm(total);
     },
 
@@ -1124,14 +1223,22 @@ function wia() {
     // core/orchestrator.py so a freshly loaded briefing renders the same
     // numbers the server computed.
     liveTotals() {
-      const entries = (this.briefing && this.briefing.entries) || [];
+      // Aggregate over the displayed 7-day window so the summary cards
+      // match the entries-table totals in both Monday and Sunday display
+      // modes. Entry-level rollups (meetings/collab/focus) are scaled by
+      // each entry's share of hours that falls inside the window.
+      const entries = this._displayEntries();
+      const isoList = this._displayIsoList();
       let meetings = 0, collab = 0, focus = 0, total = 0;
       for (const e of entries) {
-        const h = Number(e.duration_hours) || 0;
-        total += h;
-        if (e.confidence === 'high') meetings += h;
-        else if (e.confidence === 'medium') collab += h;
-        if ((e.label || '').toLowerCase().startsWith('focus')) focus += h;
+        const dh = e.daily_hours || {};
+        let visible = 0;
+        for (const iso of isoList) visible += dh[iso] || 0;
+        if (visible <= 0) continue;
+        total += visible;
+        if (e.confidence === 'high') meetings += visible;
+        else if (e.confidence === 'medium') collab += visible;
+        if ((e.label || '').toLowerCase().startsWith('focus')) focus += visible;
       }
       const r = (n) => Math.round(n * 100) / 100;
       return {
@@ -1143,7 +1250,8 @@ function wia() {
     },
 
     liveTopWorkAreas(limit = 5) {
-      const entries = (this.briefing && this.briefing.entries) || [];
+      const entries = this._displayEntries();
+      const isoList = this._displayIsoList();
       // Same normalization as groupedEntries() so the chips match the
       // table groups even when raw categories differ only in case or
       // surrounding whitespace.
@@ -1151,8 +1259,12 @@ function wia() {
       for (const e of entries) {
         const raw = (e.category == null ? '' : String(e.category)).trim() || 'Uncategorized';
         const norm = raw.toLocaleLowerCase();
+        const dh = e.daily_hours || {};
+        let visible = 0;
+        for (const iso of isoList) visible += dh[iso] || 0;
+        if (visible <= 0) continue;
         const slot = by.get(norm) || { display: raw, hours: 0 };
-        slot.hours += Number(e.duration_hours) || 0;
+        slot.hours += visible;
         by.set(norm, slot);
       }
       return Array.from(by.values())

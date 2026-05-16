@@ -538,7 +538,7 @@
                     </template>
                     <!-- Total -->
                     <template x-if="row.kind !== 'notes'">
-                      <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(row.group.total) : hhmm(row.entry.duration_hours)"></td>
+                      <td class="px-3 text-right tabular-nums font-medium" x-text="row.kind === 'group' ? hhmm(row.group.total) : hhmm(entryDisplayTotal(row.entry))"></td>
                     </template>
                     <!-- Impact -->
                     <template x-if="row.kind !== 'notes'">

@@ -53,7 +53,7 @@ MAX_ORGANIZATION_LENGTH = 100
 # Outlook calendar categories treated as "umbrella" tags — the categoriser
 # uses them as a *signal* that an event belongs in a customer/client/vendor
 # bucket but derives the *specific* category from the event title (e.g.
-# ``Contoso- Azure Landing Zone ANF`` under the umbrella ``Customer`` becomes a ``Contoso``
+# ``Contoso- Azure Landing Zone vWAN`` under the umbrella ``Customer`` becomes a ``Contoso``
 # entry, not a generic ``Customer`` bucket). Users can override via
 # ``PUT /prefs``; an empty list means "no umbrellas, use Outlook tags 1:1".
 DEFAULT_UMBRELLA_CATEGORIES: list[str] = [

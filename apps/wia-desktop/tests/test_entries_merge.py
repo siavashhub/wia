@@ -104,10 +104,10 @@ def test_merge_inserts_new_entry_when_no_match():
     )
     entries_repo.merge_week(
         WEEK,
-        [_entry("Contoso- Azure Landing Zone ANF", category="Customer", block_ids=[99])],
+        [_entry("Contoso- Azure Landing Zone vWAN", category="Customer", block_ids=[99])],
     )
     labels = {r.label for r in _all_rows()}
-    assert labels == {"Standup", "Contoso- Azure Landing Zone ANF"}
+    assert labels == {"Standup", "Contoso- Azure Landing Zone vWAN"}
 
 
 def test_merge_preserves_user_edited_row():
@@ -360,7 +360,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
                 sources="",
             ),
             TimeEntryRow(
-                label="Customer – Contoso- Azure Landing Zone ANF",
+                label="Customer – Contoso- Azure Landing Zone vWAN",
                 category="Customer",
                 duration_hours=1.0,
                 confidence="high",
@@ -376,7 +376,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
     entries = {e.label: e.sources for e in entries_repo.list_entries(week_of=WEEK)}
     assert entries["Service – Re: FabrikamWin Wire"] == ["email"]
     assert entries["Other – Chat with Ashton"] == ["teams"]
-    assert entries["Customer – Contoso- Azure Landing Zone ANF"] == ["unknown"]
+    assert entries["Customer – Contoso- Azure Landing Zone vWAN"] == ["unknown"]
 
 
 def test_list_entries_does_not_backfill_manual_rows_without_sources():

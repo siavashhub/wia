@@ -119,6 +119,16 @@ def test_external_meeting_with_outlook_tag_keeps_tag_even_without_preserve():
     assert cat == "Workshop"
 
 
+def test_no_attendee_outlook_tag_also_collapses_to_internal():
+    # Appointment-style block (focus time, reminder) with an Outlook
+    # tag like "Messages" or "Service" \u2014 no attendees at all. The
+    # collapse should still fire so these don't spawn one-off buckets.
+    block = _b("Messages \u2013 Onboarding Transition Call", participants=[])
+    block.metadata["categories_display"] = "Messages"
+    _label, cat = categorize(block, internal_domains={"contoso.com"})
+    assert cat == "Internal"
+
+
 def test_aggregate_groups_by_label():
     blocks = [
         _b("Standup", hours=0.5),
@@ -176,7 +186,7 @@ def test_infer_sources_from_label_defaults_to_unknown():
     # No prefix, no "Chat with" — we don't try to guess calendar; show a
     # neutral "unknown" placeholder until a rescan fills it in.
     assert infer_sources_from_label("Standup") == ["unknown"]
-    assert infer_sources_from_label("Customer – Contoso- Azure Landing Zone ANF") == ["unknown"]
+    assert infer_sources_from_label("Customer – Contoso- Azure Landing Zone vWAN") == ["unknown"]
 
 
 def test_infer_sources_from_label_empty():
