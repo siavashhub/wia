@@ -98,6 +98,24 @@ jobs:
             -DestinationPath dist\release\wia-desktop-${{ steps.resolve.outputs.tag }}.zip
           Get-ChildItem dist\installer\*.exe | Copy-Item -Destination dist\release\
 
+      - name: Stage release notes
+        # If docs/releases/<tag>.md exists, ship it as RELEASE_NOTES.md so the
+        # publish job can use it as the GitHub Release body. Otherwise write a
+        # placeholder so body_path always points to a real file (the action
+        # also appends auto-generated notes via generate_release_notes: true).
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.resolve.outputs.tag }}"
+          $src = "docs/releases/$tag.md"
+          $dst = "dist/release/RELEASE_NOTES.md"
+          if (Test-Path $src) {
+            Copy-Item $src $dst
+            Write-Host "Using release notes from $src"
+          } else {
+            "_No curated release notes for $tag._" | Set-Content -Path $dst -Encoding UTF8
+            Write-Host "::warning::No docs/releases/$tag.md found; using placeholder body."
+          }
+
       - name: Generate SBOM (CycloneDX)
         run: uv run cyclonedx-py environment --output-format JSON --output-file dist/release/wia-sbom.cdx.json
 
@@ -143,6 +161,8 @@ jobs:
         with:
           tag_name: ${{ needs.build.outputs.tag }}
           name: WIA ${{ needs.build.outputs.tag }}
+          body_path: dist/release/RELEASE_NOTES.md
+          append_body: true
           generate_release_notes: true
           draft: ${{ github.event_name == 'workflow_dispatch' }}
           files: |
