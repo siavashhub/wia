@@ -15,7 +15,14 @@ SRC = ROOT / "apps" / "wia-desktop" / "src"
 # jsonschema (pulled in transitively via the `mcp` package) optionally loads
 # `rfc3987_syntax`, which ships a .lark grammar file that PyInstaller must
 # include as a data file. Without it the frozen app crashes on first import.
-extra_datas = [(str(SRC / "wia" / "ui"), "wia/ui")]
+extra_datas = [
+    (str(SRC / "wia" / "ui"), "wia/ui"),
+    # version.json lives at the repo root in source checkouts. Bundle it
+    # next to the `wia` package so `wia._read_version()` can find it inside
+    # the frozen onedir build (otherwise the app falls back to the hard-coded
+    # default and the footer shows the wrong version).
+    (str(ROOT / "version.json"), "."),
+]
 extra_datas += collect_data_files("rfc3987_syntax")
 extra_datas += collect_data_files("jsonschema_specifications")
 
