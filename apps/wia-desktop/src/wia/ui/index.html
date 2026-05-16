@@ -365,10 +365,6 @@
             >
               <span x-html="icon('plus', 'h-4 w-4')"></span><span>Add manual entry</span>
             </button>
-            <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Week starts on" title="Choose the first day of the week">
-              <button type="button" @click="setWeekStartsOn('sun')" :class="prefs.week_starts_on === 'sun' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Sunday"><span>Sun</span></button>
-              <button type="button" @click="setWeekStartsOn('mon')" :class="prefs.week_starts_on === 'mon' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Monday"><span>Mon</span></button>
-            </div>
             <button @click="copyTable()" class="inline-flex items-center gap-1 rounded border px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
               <template x-if="copied">
                 <span class="inline-flex items-center gap-1"><span x-html="icon('check', 'h-4 w-4')"></span><span>Copied</span></span>
@@ -386,7 +382,18 @@
             <thead class="text-left text-slate-500 dark:text-slate-400">
               <tr class="border-b dark:border-slate-700">
                 <th class="w-8"></th>
-                <th class="py-2 pr-3">Category</th>
+                <th class="py-2 pr-3">
+                  <button
+                    type="button"
+                    @click="setGroupSort('category')"
+                    class="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                    :title="groupSort.key === 'category' ? ('Sorted by category (' + (groupSort.dir === 'asc' ? 'A → Z' : 'Z → A') + '). Click to toggle.') : 'Sort by category'"
+                    :aria-sort="groupSort.key === 'category' ? (groupSort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+                  >
+                    <span>Category</span>
+                    <span class="text-[10px]" x-text="groupSortIndicator('category')"></span>
+                  </button>
+                </th>
                 <th class="pr-3">Label</th>
                 <template x-for="i in [0,1,2,3,4,5,6]" :key="i">
                   <th class="px-2 text-right">
@@ -394,7 +401,18 @@
                     <span class="text-[10px] font-normal" x-text="dayDate(i)"></span>
                   </th>
                 </template>
-                <th class="px-3 text-right">Total</th>
+                <th class="px-3 text-right">
+                  <button
+                    type="button"
+                    @click="setGroupSort('total')"
+                    class="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                    :title="groupSort.key === 'total' ? ('Sorted by total (' + (groupSort.dir === 'desc' ? 'high → low' : 'low → high') + '). Click to toggle.') : 'Sort by total hours'"
+                    :aria-sort="groupSort.key === 'total' ? (groupSort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+                  >
+                    <span>Total</span>
+                    <span class="text-[10px]" x-text="groupSortIndicator('total')"></span>
+                  </button>
+                </th>
                 <th class="px-3 text-center">Conf.</th>
                 <th class="px-3 text-center">Impact</th>
                 <th class="w-12"></th>
@@ -445,20 +463,20 @@
                           <span class="text-xs text-slate-500 dark:text-slate-400" x-text="group.entries.length + (group.entries.length === 1 ? ' item' : ' items')"></span>
                         </template>
                         <template x-if="row.kind === 'sub'">
-                          <div class="flex flex-wrap items-center gap-1.5">
-                            <input class="min-w-[12rem] flex-1 bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
+                          <div class="flex flex-nowrap items-center gap-1.5">
+                            <input class="min-w-0 flex-1 bg-transparent" x-model="row.entry.label" @change="patchEntry(row.entry)" />
                             <template x-for="src in (row.entry.sources || [])" :key="'src-' + row.entry.id + '-' + src">
                               <span
                                 :class="sourceBadgeClass(src)"
                                 :title="sourceBadgeTitle(src)"
-                                class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                                class="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
                               >
                                 <span x-html="icon(sourceBadgeIcon(src), 'h-3 w-3')"></span>
                                 <span x-text="sourceBadgeLabel(src)"></span>
                               </span>
                             </template>
                             <template x-if="(row.entry.notes || '').trim()">
-                              <span title="Has notes" class="text-amber-500" x-html="icon('chat-bubble-left-right', 'h-3.5 w-3.5')"></span>
+                              <span title="Has notes" class="shrink-0 text-amber-500" x-html="icon('chat-bubble-left-right', 'h-3.5 w-3.5')"></span>
                             </template>
                           </div>
                         </template>
@@ -513,6 +531,16 @@
                     <!-- Actions (notes toggle + delete) -->
                     <template x-if="row.kind !== 'notes'">
                       <td class="text-center">
+                        <template x-if="row.kind === 'group'">
+                          <button
+                            type="button"
+                            class="text-red-600 hover:text-red-700 disabled:opacity-50"
+                            :disabled="deletingCategory === group.category"
+                            :aria-label="'Delete all entries in category ' + group.category"
+                            :title="'Delete all entries in ' + group.category"
+                            @click.stop="deleteCategory(group)"
+                          ><span x-html="icon('trash', 'h-4 w-4')"></span></button>
+                        </template>
                         <template x-if="row.kind === 'sub'">
                           <div class="inline-flex items-center gap-1">
                             <button
@@ -1390,6 +1418,15 @@
                   <button type="button" @click="setTheme('light')" :class="prefs.theme === 'light' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('sun', 'h-3.5 w-3.5')"></span><span>Light</span></button>
                   <button type="button" @click="setTheme('dark')" :class="prefs.theme === 'dark' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('moon', 'h-3.5 w-3.5')"></span><span>Dark</span></button>
                   <button type="button" @click="setTheme('system')" :class="prefs.theme === 'system' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"><span x-html="icon('computer-desktop', 'h-3.5 w-3.5')"></span><span>Auto</span></button>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center text-slate-500 dark:text-slate-400" title="First day of the week shown in the Briefing table.">
+                  <span>Week starts on</span>
+                </span>
+                <div class="flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800" role="group" aria-label="Week starts on">
+                  <button type="button" @click="setWeekStartsOn('sun')" :class="prefs.week_starts_on === 'sun' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Sunday"><span>Sun</span></button>
+                  <button type="button" @click="setWeekStartsOn('mon')" :class="prefs.week_starts_on === 'mon' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs" title="Week starts on Monday"><span>Mon</span></button>
                 </div>
               </div>
             </div>

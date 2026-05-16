@@ -30,6 +30,7 @@ function wia() {
     scanningBriefing: false,  // a background scan (refresh=true) is running
     scanningWeekIso: null,    // which Monday-week the scan is targeting
     clearingWeek: false,      // DELETE /api/briefing in flight
+    deletingCategory: null,   // category name currently being bulk-deleted
     error: null,
     copied: false,
     weekOffset: 0, // 0 = current week, -1 = last week, ...
@@ -76,6 +77,13 @@ function wia() {
     appVersion: '',
     expanded: {}, // { [category]: boolean }
     notesOpen: {}, // { [entry.id]: boolean } — which entries have their notes row open
+    // How the entries table groups are ordered. Defaults to a stable
+    // alphabetical sort so local edits (deletes, impact changes, etc.)
+    // don't shuffle rows mid-action. The user can switch to a totals sort
+    // by clicking the Total header.
+    //   key:  'category' | 'total'
+    //   dir:  'asc' | 'desc'
+    groupSort: { key: 'category', dir: 'asc' },
     // Inline "Add manual entry" form. Hidden until the user clicks the
     // Add button, lives on a single row beneath the entries table.
     manualFormOpen: false,
@@ -810,9 +818,36 @@ function wia() {
         const total = items.reduce((s, e) => s + (e.duration_hours || 0), 0);
         groups.push({ category, entries: items, daily, total });
       }
-      // Sort categories by total descending so the biggest buckets surface first.
-      groups.sort((a, b) => b.total - a.total);
+      // Sort categories using the user's chosen key. Default is
+      // alphabetical so deletes / impact edits don't re-rank groups
+      // mid-action; the user can opt into totals-descending by clicking
+      // the Total header.
+      const { key, dir } = this.groupSort || { key: 'category', dir: 'asc' };
+      const sign = dir === 'desc' ? -1 : 1;
+      if (key === 'total') {
+        groups.sort((a, b) => sign * (a.total - b.total));
+      } else {
+        groups.sort((a, b) =>
+          sign * String(a.category).localeCompare(String(b.category), undefined, { sensitivity: 'base' })
+        );
+      }
       return groups;
+    },
+
+    setGroupSort(key) {
+      const current = this.groupSort || { key: 'category', dir: 'asc' };
+      if (current.key === key) {
+        this.groupSort = { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
+      } else {
+        // Sensible default direction per column: A→Z for category, big→small for total.
+        this.groupSort = { key, dir: key === 'total' ? 'desc' : 'asc' };
+      }
+    },
+
+    groupSortIndicator(key) {
+      const current = this.groupSort || { key: 'category', dir: 'asc' };
+      if (current.key !== key) return '';
+      return current.dir === 'asc' ? '▲' : '▼';
     },
 
     groupRows(group) {
@@ -987,6 +1022,37 @@ function wia() {
         await fetch(`/api/entries/${entry.id}`, { method: 'DELETE' });
         this.briefing.entries = this.briefing.entries.filter(e => e.id !== entry.id);
       } catch (e) { this.error = String(e); }
+    },
+
+    async deleteCategory(group) {
+      if (!group || !group.entries || !group.entries.length) return;
+      const count = group.entries.length;
+      const label = group.category || 'Uncategorized';
+      const msg = `Delete all ${count} ${count === 1 ? 'entry' : 'entries'} in "${label}"? This cannot be undone.`;
+      if (!window.confirm(msg)) return;
+      this.deletingCategory = group.category;
+      this.error = null;
+      try {
+        const ids = group.entries.map(e => e.id);
+        const results = await Promise.allSettled(
+          ids.map(id => fetch(`/api/entries/${id}`, { method: 'DELETE' }))
+        );
+        const failed = results.filter(r => r.status === 'rejected' || (r.value && !r.value.ok)).length;
+        const deletedIds = new Set(
+          ids.filter((_, i) => {
+            const r = results[i];
+            return r.status === 'fulfilled' && r.value && r.value.ok;
+          })
+        );
+        this.briefing.entries = this.briefing.entries.filter(e => !deletedIds.has(e.id));
+        if (failed) {
+          this.error = `Failed to delete ${failed} of ${count} ${failed === 1 ? 'entry' : 'entries'} in "${label}".`;
+        }
+      } catch (e) {
+        this.error = String(e);
+      } finally {
+        this.deletingCategory = null;
+      }
     },
 
     // ---- Export ---------------------------------------------------------
