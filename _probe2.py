@@ -18,9 +18,9 @@ async def main():
             print(
                 f"  {e.category:<12} | {e.duration_hours:>5.2f}h | thu={thu}h | {e.impact:<6} | {e.label[:80]}"
             )
-    print(f"\nSearch for CTC / TD across full week:")
+    print(f"\nSearch for Contoso/ Fabrikamacross full week:")
     for e in b.entries:
-        if "CTC" in (e.label or "") or "TD - KO" in (e.label or ""):
+        if "Contoso" in (e.label or "") or "Fabrikam- KO" in (e.label or ""):
             print(f"  FOUND: {e.category} | {e.impact} | {e.label} | {e.daily_hours}")
 
 

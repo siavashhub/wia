@@ -22,9 +22,9 @@ for r in c.execute(
         thu = dh.get("2026-05-14", 0)
         print(f"  {r[1]:<12} | {r[2]:>5.2f}h | thu={thu}h | {r[5]:<6} | {r[0][:65]}")
 
-print("\n--- Search for CTC / AVS / ANF / TD-KO in any label across ALL weeks ---")
+print("\n--- Search for Contoso/ Azure Landing Zone / ANF / Fabrikam-KO in any label across ALL weeks ---")
 for r in c.execute(
-    "SELECT week_of, label, category FROM time_entry WHERE label LIKE '%CTC%' OR label LIKE '%AVS%' OR label LIKE '%ANF%' OR label LIKE '%TD - KO%' OR label LIKE '%TD-KO%'"
+    "SELECT week_of, label, category FROM time_entry WHERE label LIKE '%Contoso%' OR label LIKE '%Azure Landing Zone%' OR label LIKE '%ANF%' OR label LIKE '%Fabrikam- KO%' OR label LIKE '%Fabrikam-KO%'"
 ):
     print(f"  week={r[0]} | {r[2]:<12} | {r[1]}")
 

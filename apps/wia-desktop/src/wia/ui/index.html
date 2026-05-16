@@ -290,12 +290,18 @@
                   x-text="'· ' + prefs.high_impact_keywords.length + ' high-impact'"></span>
             <span x-show="(prefs.high_impact_calendar_categories || []).length"
                   x-text="'· ' + prefs.high_impact_calendar_categories.length + ' high-impact cat'"></span>
+            <span x-show="(prefs.umbrella_calendar_categories || []).length"
+                  x-text="'· ' + prefs.umbrella_calendar_categories.length + ' umbrella cat'"></span>
+            <span x-show="(prefs.preserve_calendar_categories || []).length"
+                  x-text="'· ' + prefs.preserve_calendar_categories.length + ' preserve cat'"></span>
             <span x-show="prefs.exclude_private_meetings">· private excluded</span>
             <span x-show="prefs.organization_label" x-text="'· org: ' + prefs.organization_label"></span>
             <span x-show="!(prefs.excluded_keywords || []).length
                         && !(prefs.excluded_calendar_categories || []).length
                         && !(prefs.high_impact_keywords || []).length
                         && !(prefs.high_impact_calendar_categories || []).length
+                        && !(prefs.umbrella_calendar_categories || []).length
+                        && !(prefs.preserve_calendar_categories || []).length
                         && !prefs.exclude_private_meetings
                         && !prefs.organization_label"
                   class="italic">none configured</span>
@@ -377,7 +383,11 @@
           </div>
         </div>
 
-        <div class="mt-3 overflow-x-auto">
+        <!-- Table: rendered only when there are entries to show. The
+             empty / skeleton / state-aware cards live in a sibling block
+             below so they get the full section width and aren't squeezed
+             by the table's narrow Category-indent column. -->
+        <div x-show="!!(briefing?.entries?.length)" class="mt-3 overflow-x-auto">
           <table class="w-full min-w-[1024px] table-fixed text-sm">
             <colgroup>
               <col class="w-8"><!-- chevron -->
@@ -588,73 +598,6 @@
                     </template>
                 </tr>
               </template>
-              <template x-if="!briefing?.entries?.length">
-                <tr>
-                  <td :colspan="6 + dayLabels.length" class="py-0">
-                    <!-- Skeleton rows during the very first paint -->
-                    <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
-                      <div class="space-y-2 py-4">
-                        <template x-for="n in [1,2,3,4,5]" :key="'rowskel-' + n">
-                          <div class="flex items-center gap-3 px-1">
-                            <div class="h-4 w-24 wia-skeleton"></div>
-                            <div class="h-4 flex-1 wia-skeleton"></div>
-                            <div class="h-4 w-12 wia-skeleton"></div>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-
-                    <!-- State-aware empty card -->
-                    <template x-if="briefing && !loading && !isScanningCurrent()">
-                      <div class="py-8 text-center">
-                        <!-- A. Work IQ not connected -->
-                        <template x-if="!workiq.ready">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:link', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">Connect Work IQ to scan your week</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              WIA reads your calendar, Teams, and email through the Microsoft Work IQ CLI.
-                              You'll be prompted to sign in once.
-                            </p>
-                            <button @click="enableWorkIQ()" :disabled="enabling" class="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
-                              <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
-                            </button>
-                          </div>
-                        </template>
-                        <!-- B. First run: connected, but never scanned -->
-                        <template x-if="workiq.ready && isFirstRun()">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-indigo-500" x-html="icon('outline:rocket-launch', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">Ready for your first scan</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              WIA hasn't scanned this week yet. Tap below to pull
-                              your <span x-text="(prefs.enabled_signals || []).join(' · ') || 'enabled signals'"></span>
-                              from Work IQ. Usually takes 20–60 seconds.
-                            </p>
-                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700">
-                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Run first scan</span>
-                            </button>
-                          </div>
-                        </template>
-                        <!-- C. Connected, prior scans exist, but this week has no activity -->
-                        <template x-if="workiq.ready && !isFirstRun()">
-                          <div>
-                            <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:calendar-days', 'h-10 w-10')"></div>
-                            <h4 class="mt-2 font-semibold">No activity recorded for this week</h4>
-                            <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                              <!-- Last scan was <span x-text="timeAgo(schedule.last_scan_at)"></span>. -->
-                              <!-- Try a rescan, or pick a different week. -->
-                            </p>
-                            <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded border px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
-                              <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Scan this week</span>
-                            </button>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-                  </td>
-                </tr>
-              </template>
             </tbody>
             <template x-if="briefing?.entries?.length">
               <tfoot class="font-medium">
@@ -671,6 +614,75 @@
             </template>
           </table>
         </div>
+
+        <!-- Empty / loading state — sibling of the table so it spans the
+             full section width and is unaffected by the table's
+             column layout. -->
+        <template x-if="!briefing?.entries?.length">
+          <div class="mt-3">
+            <!-- Skeleton rows during the very first paint -->
+            <template x-if="bootingBriefing() || loading || (isScanningCurrent() && !hasEntries())">
+              <div class="space-y-2 py-4">
+                <template x-for="n in [1,2,3,4,5]" :key="'rowskel-' + n">
+                  <div class="flex items-center gap-3 px-1">
+                    <div class="h-4 w-24 wia-skeleton"></div>
+                    <div class="h-4 flex-1 wia-skeleton"></div>
+                    <div class="h-4 w-12 wia-skeleton"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- State-aware empty card -->
+            <template x-if="briefing && !loading && !isScanningCurrent()">
+              <div class="py-8 text-center">
+                <!-- A. Work IQ not connected -->
+                <template x-if="!workiq.ready">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:link', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">Connect Work IQ to scan your week</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      WIA reads your calendar, Teams, and email through the Microsoft Work IQ CLI.
+                      You'll be prompted to sign in once.
+                    </p>
+                    <button @click="enableWorkIQ()" :disabled="enabling" class="mt-4 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
+                      <span x-text="enabling ? 'Connecting…' : 'Enable Work IQ'"></span>
+                    </button>
+                  </div>
+                </template>
+                <!-- B. First run: connected, but never scanned -->
+                <template x-if="workiq.ready && isFirstRun()">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-indigo-500" x-html="icon('outline:rocket-launch', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">Ready for your first scan</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      WIA hasn't scanned this week yet. Tap below to pull
+                      your <span x-text="(prefs.enabled_signals || []).join(' · ') || 'enabled signals'"></span>
+                      from Work IQ. Usually takes 20–60 seconds.
+                    </p>
+                    <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700">
+                      <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Run first scan</span>
+                    </button>
+                  </div>
+                </template>
+                <!-- C. Connected, prior scans exist, but this week has no activity -->
+                <template x-if="workiq.ready && !isFirstRun()">
+                  <div>
+                    <div class="mx-auto inline-flex h-12 w-12 items-center justify-center text-slate-400 dark:text-slate-500" x-html="icon('outline:calendar-days', 'h-10 w-10')"></div>
+                    <h4 class="mt-2 font-semibold">No activity recorded for this week</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      <!-- Last scan was <span x-text="timeAgo(schedule.last_scan_at)"></span>. -->
+                      <!-- Try a rescan, or pick a different week. -->
+                    </p>
+                    <button @click="rescan()" class="mt-4 inline-flex items-center gap-1 rounded border px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
+                      <span x-html="icon('magnifying-glass', 'h-4 w-4')"></span><span>Scan this week</span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
 
         <!-- Inline manual-entry form: collapses by default; opened via the
              "Add manual entry" button above. Lives beneath the table so the
@@ -1487,7 +1499,7 @@
                 <span>Filters</span>
               </span>
               <div
-                class="inline-flex items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
+                class="flex flex-wrap items-center gap-1 rounded-lg border bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
                 role="tablist"
                 aria-label="Scan preferences tabs"
               >
@@ -1520,6 +1532,16 @@
                   class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
                 >
                   <span x-html="icon('star', 'h-3.5 w-3.5')"></span><span>Impact</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="prefsTab === 'categories'"
+                  @click="prefsTab = 'categories'"
+                  :class="prefsTab === 'categories' ? 'bg-white shadow-sm dark:bg-slate-700' : 'opacity-60 hover:opacity-100'"
+                  class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                >
+                  <span x-html="icon('queue-list', 'h-3.5 w-3.5')"></span><span>Categories</span>
                 </button>
                 <button
                   type="button"
@@ -1715,6 +1737,87 @@
                   class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
                   aria-label="Add high-impact calendar category"
                 />
+              </div>
+            </div>
+          </div>
+
+          <!-- Categories tab -->
+          <div x-show="prefsTab === 'categories'" x-cloak class="space-y-3 text-xs">
+            <p class="text-slate-500 dark:text-slate-400">
+              Outlook categories listed here are treated as <em>umbrella</em>
+              tags. When an event carries one of these (for example
+              <code>Customer</code> category), WIA does not bucket every event under
+              the umbrella name; instead it derives a more specific
+              category from the event title (so
+              <code>Customer</code> + <em>&ldquo;Contoso - Azure Landing Zone&rdquo;</em>
+              becomes a <code>Contoso</code> entry). Leave empty to use Outlook
+              tags 1:1.
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Outlook calendar categories whose name is too generic to use as a bucket on its own \u2014 WIA will derive a more specific category from each event\u2019s title.">
+                <span>Umbrella categories</span>
+              </span>
+              <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                <template x-for="cat in (prefs.umbrella_calendar_categories || [])" :key="'pumb-' + cat">
+                  <span class="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200">
+                    <span x-text="cat"></span>
+                    <button
+                      type="button"
+                      class="text-indigo-700 hover:text-red-600 dark:text-indigo-200 dark:hover:text-red-400"
+                      @click="removeUmbrellaCategory(cat)"
+                      :aria-label="'Remove ' + cat"
+                      title="Remove"
+                    >&times;</button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="newUmbrellaCategory"
+                  @keydown.enter.prevent="addUmbrellaCategory()"
+                  placeholder="e.g. Customer"
+                  maxlength="100"
+                  class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Add umbrella calendar category"
+                />
+              </div>
+            </div>
+
+            <div class="border-t pt-3 dark:border-slate-700">
+              <p class="text-slate-500 dark:text-slate-400">
+                By default, any Outlook category on an <em>internal-only</em>
+                meeting (every attendee in your org) is collapsed into the
+                <code>Internal</code> bucket, this keeps generic
+                organising tags like <code>Workshop</code> or
+                <code>Service</code> from spawning one-off categories. List
+                tags here that should be kept verbatim instead.
+              </p>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Outlook tags that should remain their own top-level category even on internal-only meetings.">
+                  <span>Preserve tags</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="cat in (prefs.preserve_calendar_categories || [])" :key="'pres-' + cat">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                      <span x-text="cat"></span>
+                      <button
+                        type="button"
+                        class="text-emerald-700 hover:text-red-600 dark:text-emerald-200 dark:hover:text-red-400"
+                        @click="removePreserveCategory(cat)"
+                        :aria-label="'Remove ' + cat"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newPreserveCategory"
+                    @keydown.enter.prevent="addPreserveCategory()"
+                    placeholder="e.g. Design"
+                    maxlength="100"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add preserve calendar category"
+                  />
+                </div>
               </div>
             </div>
           </div>

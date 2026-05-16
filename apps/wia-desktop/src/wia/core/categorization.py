@@ -107,6 +107,32 @@ def _client_from_participants(
     return label
 
 
+def _is_internal_only_meeting(participants: Iterable[str], internal_domains: set[str]) -> bool:
+    """True when the event has at least one participant and every parseable
+    attendee domain belongs to the user's own organisation.
+
+    This is the "all-hands / team sync / internal workshop" signal: no
+    Outlook tag, no external client to point at, but a clear roster of
+    org-internal attendees. Without this we'd dump every such event into
+    ``Other`` and lose the user's ``Internal`` bucket entirely.
+
+    Events with no participants at all return ``False`` — those are
+    appointment-style blocks (focus time, reminders) and belong under
+    ``Other`` or whatever the title keyword map matches.
+    """
+    if not internal_domains:
+        return False
+    seen_any = False
+    for email in participants:
+        m = re.search(r"@([^>\s]+)", email)
+        if not m:
+            continue
+        seen_any = True
+        if m.group(1).lower() not in internal_domains:
+            return False
+    return seen_any
+
+
 def _outlook_category_hint(block: ActivityBlock) -> str | None:
     """Return the first Outlook calendar category set on ``block`` (display
     casing), or ``None`` if the block has no categories.
@@ -131,13 +157,13 @@ def _outlook_category_hint(block: ActivityBlock) -> str | None:
 # it is. Categorising every one of those into a single ``Customer`` bucket
 # defeats the purpose of grouping. When the Outlook tag is in the user's
 # umbrella set we instead pull the specific customer / project code out of
-# the event title (which the user typically prefixes, e.g. ``"CTC - AVS"``).
+# the event title (which the user typically prefixes, e.g. ``"Contoso- Azure Landing Zone"``).
 
 _TITLE_SPLIT_RE = re.compile(r"\s*[-\u2013\u2014:|]\s*")
 
 # Lowercase tokens that are recurrence / shape labels rather than customer
 # names. When the first title segment matches one of these we advance to
-# the next segment so ``"Weekly - CTC sync"`` extracts ``CTC sync``.
+# the next segment so ``"Weekly - Contososync"`` extracts ``Contososync``.
 _TITLE_STOPWORDS: frozenset[str] = frozenset(
     {
         "weekly",
@@ -200,6 +226,7 @@ def categorize(
     keyword_map: dict[str, str] | None = None,
     internal_domains: set[str] | None = None,
     umbrella_categories: Iterable[str] | None = None,
+    preserve_categories: Iterable[str] | None = None,
 ) -> tuple[str, str | None]:
     """Return ``(label, category)`` for a block.
 
@@ -211,9 +238,17 @@ def categorize(
        derive a *more specific* category from the title prefix; the raw
        umbrella name is only used as a last-resort fallback so a generic
        ``Customer`` tag doesn't collapse every customer into one bucket.
+       When the meeting is internal-only and the tag is NOT in
+       ``preserve_categories``, the tag is dropped so the event falls
+       through to step (5) and lands in ``Internal`` \u2014 this keeps
+       generic organising tags like ``Workshop`` / ``Service`` from
+       creating one-off buckets. Tags listed in ``preserve_categories``
+       always pass through verbatim.
     3. External participant domain \u2192 derived client name.
     4. Title keyword map (sprint/standup/interview/...).
-    5. ``Other`` \u2014 no usable signal.
+    5. All-internal participants → ``Internal`` (all-hands, team syncs,
+       internal workshops).
+    6. ``Other`` — no usable signal.
 
     ``internal_domains`` lets the caller mark which email domains belong
     to the user's own organisation so they don't get treated as a
@@ -224,10 +259,17 @@ def categorize(
     that should trigger title-based extraction rather than being used
     1:1. See :data:`wia.api.prefs.DEFAULT_UMBRELLA_CATEGORIES` for the
     out-of-the-box defaults.
+
+    ``preserve_categories`` is the user-configured list of Outlook tags
+    that should *always* be kept verbatim, even on internal-only
+    meetings. Use it to opt specific internal tracks (e.g. ``Design``,
+    ``Recruiting``) out of the default internal-only → ``Internal``
+    collapse.
     """
     keyword_map = keyword_map or DEFAULT_KEYWORD_MAP
     internal_domains = internal_domains or set()
     umbrella_set = {c.strip().lower() for c in (umbrella_categories or ()) if c}
+    preserve_set = {c.strip().lower() for c in (preserve_categories or ()) if c}
 
     if block.source is Source.INFERRED:
         title = block.title or "Inferred"
@@ -251,6 +293,17 @@ def categorize(
         if derived:
             category = derived
         # else: keep ``category`` as the umbrella name (better than "Other").
+    elif (
+        category is not None
+        and category.strip().lower() not in preserve_set
+        and _is_internal_only_meeting(block.participants, internal_domains)
+    ):
+        # Plain Outlook tag on an internal-only meeting — by default
+        # we collapse to ``Internal`` (step 5) so generic organising
+        # tags like ``Workshop`` / ``Service`` don't spawn one-off
+        # buckets. The user can opt specific tags out via the
+        # ``preserve_calendar_categories`` pref.
+        category = None
 
     if category is None:
         # (3) Client from external participants.
@@ -260,8 +313,14 @@ def categorize(
         # (4) Title keyword fallback (sprint/standup/...).
         category = _classify_title(title, keyword_map)
 
+    if category is None and _is_internal_only_meeting(block.participants, internal_domains):
+        # (5) All attendees are from the user's own org — clear
+        # internal-meeting signal. Catches all-hands, team syncs,
+        # internal workshops that don't trip the keyword map.
+        category = "Internal"
+
     if category is None:
-        # (5) Nothing matched \u2014 bucket under "Other" rather than the
+        # (6) Nothing matched — bucket under "Other" rather than the
         # historical "Internal" so genuine internal work is distinguishable
         # from "we don't know".
         category = "Other"
@@ -334,6 +393,7 @@ def aggregate_entries(
     high_impact_keywords: Iterable[str] = (),
     high_impact_categories: Iterable[str] = (),
     umbrella_categories: Iterable[str] = (),
+    preserve_categories: Iterable[str] = (),
 ) -> list[TimeEntry]:
     """Aggregate blocks into TimeEntry rows by (label, category).
 
@@ -369,6 +429,7 @@ def aggregate_entries(
             keyword_map=keyword_map,
             internal_domains=internal_domains,
             umbrella_categories=umbrella_categories,
+            preserve_categories=preserve_categories,
         )
         bucket[key].append(b)
 

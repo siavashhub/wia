@@ -42,6 +42,83 @@ def test_inferred_block_is_admin():
     assert cat == "Admin"
 
 
+def test_internal_only_meeting_becomes_internal():
+    # Title doesn't trip the keyword map; all attendees are internal \u2014
+    # this is the "all-hands / team sync / internal workshop" case.
+    _label, cat = categorize(
+        _b(
+            "Cloud & AI Platform VBD",
+            participants=["alice@contoso.com", "bob@contoso.com"],
+        ),
+        internal_domains={"contoso.com"},
+    )
+    assert cat == "Internal"
+
+
+def test_internal_only_with_keyword_keeps_keyword_category():
+    # Keyword map still wins for design reviews / sprints \u2014 more specific.
+    _label, cat = categorize(
+        _b("Design review", participants=["alice@contoso.com"]),
+        internal_domains={"contoso.com"},
+    )
+    assert cat == "Design"
+
+
+def test_no_participants_does_not_become_internal():
+    _label, cat = categorize(
+        _b("Focus time", participants=[]),
+        internal_domains={"contoso.com"},
+    )
+    assert cat == "Other"
+
+
+def test_mixed_internal_and_external_is_client_not_internal():
+    _label, cat = categorize(
+        _b(
+            "Project sync",
+            participants=["alice@contoso.com", "bob@bigco.com"],
+        ),
+        internal_domains={"contoso.com"},
+    )
+    assert cat == "Bigco"
+
+
+def test_internal_only_outlook_tag_collapses_to_internal_by_default():
+    # User tagged an internal workshop "Workshop" in Outlook. By
+    # default that generic tag collapses into the Internal bucket
+    # instead of spawning a one-off "Workshop" category.
+    block = _b("Cloud & AI Platform VBD", participants=["a@contoso.com", "b@contoso.com"])
+    block.metadata["categories_display"] = "Workshop"
+    _label, cat = categorize(block, internal_domains={"contoso.com"})
+    assert cat == "Internal"
+
+
+def test_preserve_categories_keeps_internal_only_tag_verbatim():
+    # The user opted "Design" out of the internal collapse \u2014 it
+    # remains its own top-level category even with all-internal
+    # attendees.
+    block = _b("Internal design review", participants=["a@contoso.com"])
+    block.metadata["categories_display"] = "Design"
+    _label, cat = categorize(
+        block,
+        internal_domains={"contoso.com"},
+        preserve_categories=["Design"],
+    )
+    assert cat == "Design"
+
+
+def test_external_meeting_with_outlook_tag_keeps_tag_even_without_preserve():
+    # The internal-only collapse must NOT fire for meetings with any
+    # external attendee \u2014 the Outlook tag still wins outright.
+    block = _b(
+        "Customer kickoff",
+        participants=["a@contoso.com", "c@bigco.com"],
+    )
+    block.metadata["categories_display"] = "Workshop"
+    _label, cat = categorize(block, internal_domains={"contoso.com"})
+    assert cat == "Workshop"
+
+
 def test_aggregate_groups_by_label():
     blocks = [
         _b("Standup", hours=0.5),
@@ -84,10 +161,10 @@ def test_aggregate_picks_up_merged_sources_metadata():
 
 def test_infer_sources_from_label_email_prefix():
     assert infer_sources_from_label("Re: ALZ Assessment") == ["email"]
-    assert infer_sources_from_label("FW: TD Win Wire") == ["email"]
+    assert infer_sources_from_label("FW: FabrikamWin Wire") == ["email"]
     assert infer_sources_from_label("Fwd: Onboarding") == ["email"]
     # ``Category - …`` prefix must be stripped before checking.
-    assert infer_sources_from_label("Service – Re: TD Win Wire") == ["email"]
+    assert infer_sources_from_label("Service – Re: FabrikamWin Wire") == ["email"]
 
 
 def test_infer_sources_from_label_chat():
@@ -99,7 +176,7 @@ def test_infer_sources_from_label_defaults_to_unknown():
     # No prefix, no "Chat with" — we don't try to guess calendar; show a
     # neutral "unknown" placeholder until a rescan fills it in.
     assert infer_sources_from_label("Standup") == ["unknown"]
-    assert infer_sources_from_label("Customer – CTC - AVS ANF") == ["unknown"]
+    assert infer_sources_from_label("Customer – Contoso- Azure Landing Zone ANF") == ["unknown"]
 
 
 def test_infer_sources_from_label_empty():
@@ -252,15 +329,18 @@ def test_external_participant_wins_even_when_outnumbered():
     assert cat == "Customer"
 
 
-def test_internal_only_attendees_fall_through_to_keyword_or_other():
-    # Internal-only attendees with no keyword hit → "Other" (was "Internal").
+def test_internal_only_attendees_fall_through_to_keyword_or_internal():
+    # Internal-only attendees with no keyword hit \u2192 "Internal" (all-hands
+    # / team sync signal). This used to be "Other" before we added the
+    # internal-only fallback.
     _label, cat = categorize(
         _b("Adhoc sync", participants=["a@microsoft.com", "b@microsoft.com"]),
         internal_domains={"microsoft.com"},
     )
-    assert cat == "Other"
+    assert cat == "Internal"
     # Internal-only attendees with a keyword hit still get the keyword
-    # category.
+    # category \u2014 keywords are more specific than the generic Internal
+    # fallback.
     _label, cat = categorize(
         _b("Sprint planning", participants=["a@microsoft.com"]),
         internal_domains={"microsoft.com"},

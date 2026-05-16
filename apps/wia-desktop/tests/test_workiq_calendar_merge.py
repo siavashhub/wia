@@ -31,15 +31,15 @@ def test_merge_unions_distinct_events():
 
 
 def test_merge_dedups_by_start_and_title():
-    a = [_ev("CTC - AVS", "2026-05-14T10:00")]
-    b = [_ev("CTC - AVS", "2026-05-14T10:00")]
+    a = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00")]
+    b = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00")]
     merged = _merge_event_payloads(a, b)
     assert len(merged) == 1
 
 
 def test_merge_dedup_is_case_and_whitespace_insensitive():
-    a = [_ev("CTC  -  AVS", "2026-05-14T10:00")]
-    b = [_ev("ctc - avs", "2026-05-14T10:00")]
+    a = [_ev("Contoso -  Azure Landing Zone", "2026-05-14T10:00")]
+    b = [_ev("contoso - azure landing zone", "2026-05-14T10:00")]
     merged = _merge_event_payloads(a, b)
     assert len(merged) == 1
 
@@ -47,16 +47,16 @@ def test_merge_dedup_is_case_and_whitespace_insensitive():
 def test_merge_prefers_copy_with_categories():
     # Primary has no categories, secondary does — secondary wins so the
     # Outlook category isn't lost.
-    a = [_ev("CTC - AVS", "2026-05-14T10:00", categories=[])]
-    b = [_ev("CTC - AVS", "2026-05-14T10:00", categories=["Customer"])]
+    a = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00", categories=[])]
+    b = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00", categories=["Customer"])]
     merged = _merge_event_payloads(a, b)
     assert len(merged) == 1
     assert merged[0]["categories"] == ["Customer"]
 
 
 def test_merge_keeps_primary_when_secondary_has_no_categories():
-    a = [_ev("CTC - AVS", "2026-05-14T10:00", categories=["Customer"])]
-    b = [_ev("CTC - AVS", "2026-05-14T10:00", categories=[])]
+    a = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00", categories=["Customer"])]
+    b = [_ev("Contoso- Azure Landing Zone", "2026-05-14T10:00", categories=[])]
     merged = _merge_event_payloads(a, b)
     assert len(merged) == 1
     assert merged[0]["categories"] == ["Customer"]

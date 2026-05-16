@@ -24,6 +24,7 @@ PREF_EXCLUDED_CATEGORIES = "excluded_calendar_categories"
 PREF_HIGH_IMPACT_KEYWORDS = "high_impact_keywords"
 PREF_HIGH_IMPACT_CATEGORIES = "high_impact_calendar_categories"
 PREF_UMBRELLA_CATEGORIES = "umbrella_calendar_categories"
+PREF_PRESERVE_CATEGORIES = "preserve_calendar_categories"
 PREF_EXCLUDE_PRIVATE = "exclude_private_meetings"
 PREF_ORGANIZATION = "organization_label"
 PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
@@ -45,12 +46,14 @@ MAX_HIGH_IMPACT_CATEGORIES = 100
 MAX_HIGH_IMPACT_CATEGORY_LENGTH = 100
 MAX_UMBRELLA_CATEGORIES = 100
 MAX_UMBRELLA_CATEGORY_LENGTH = 100
+MAX_PRESERVE_CATEGORIES = 100
+MAX_PRESERVE_CATEGORY_LENGTH = 100
 MAX_ORGANIZATION_LENGTH = 100
 
 # Outlook calendar categories treated as "umbrella" tags — the categoriser
 # uses them as a *signal* that an event belongs in a customer/client/vendor
 # bucket but derives the *specific* category from the event title (e.g.
-# ``CTC - AVS ANF`` under the umbrella ``Customer`` becomes a ``CTC``
+# ``Contoso- Azure Landing Zone ANF`` under the umbrella ``Customer`` becomes a ``Contoso``
 # entry, not a generic ``Customer`` bucket). Users can override via
 # ``PUT /prefs``; an empty list means "no umbrellas, use Outlook tags 1:1".
 DEFAULT_UMBRELLA_CATEGORIES: list[str] = [
@@ -415,6 +418,90 @@ def get_umbrella_calendar_categories() -> list[str]:
     return _read_umbrella_categories()
 
 
+# Outlook categories that should always pass through verbatim, even when
+# the meeting is internal-only. By default WIA collapses any Outlook tag
+# on an all-internal meeting into the ``Internal`` bucket (so generic
+# organising tags like ``Workshop`` / ``Service`` don't bloat the
+# category list). Adding a tag here opts it out of that collapse so it
+# becomes its own first-class category again (e.g. an internal
+# ``Design`` track the user wants to keep visible).
+DEFAULT_PRESERVE_CATEGORIES: list[str] = []
+
+
+def _read_preserve_categories() -> list[str]:
+    """Return the user-configured tags that should bypass the
+    internal-only → Internal collapse.
+
+    Returns an empty list when the pref has never been set — the
+    default is to collapse all Outlook tags on internal-only meetings
+    into ``Internal``.
+    """
+    raw = prefs_store.get_pref(PREF_PRESERVE_CATEGORIES)
+    if not raw:
+        return list(DEFAULT_PRESERVE_CATEGORIES)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return list(DEFAULT_PRESERVE_CATEGORIES)
+    if not isinstance(parsed, list):
+        return list(DEFAULT_PRESERVE_CATEGORIES)
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in parsed:
+        if not isinstance(c, str):
+            continue
+        cleaned = c.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _normalize_preserve_categories(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            raise HTTPException(
+                status_code=400,
+                detail="preserve_calendar_categories must all be strings",
+            )
+        cleaned = raw.strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_PRESERVE_CATEGORY_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"preserve category exceeds {MAX_PRESERVE_CATEGORY_LENGTH} "
+                    f"chars: {cleaned[:32]!r}\u2026"
+                ),
+            )
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    if len(out) > MAX_PRESERVE_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"at most {MAX_PRESERVE_CATEGORIES} preserve categories allowed",
+        )
+    return out
+
+
+def get_preserve_calendar_categories() -> list[str]:
+    """Public helper used by the categoriser: Outlook tags that should
+    NOT be collapsed to ``Internal`` when the meeting is internal-only.
+    Lets the user keep a few intentional internal tags as their own
+    top-level category (e.g. ``Design``, ``Recruiting``)."""
+    return _read_preserve_categories()
+
+
 def get_exclude_private_meetings() -> bool:
     """Public helper: should calendar blocks marked private/personal/
     confidential be dropped before grouping?"""
@@ -492,6 +579,7 @@ class Prefs(BaseModel):
     umbrella_calendar_categories: list[str] = Field(
         default_factory=lambda: list(DEFAULT_UMBRELLA_CATEGORIES)
     )
+    preserve_calendar_categories: list[str] = Field(default_factory=list)
     exclude_private_meetings: bool = False
     organization_label: str = ""
     organization_label_auto: bool = False
@@ -508,6 +596,7 @@ class PrefsUpdate(BaseModel):
     high_impact_keywords: list[str] | None = None
     high_impact_calendar_categories: list[str] | None = None
     umbrella_calendar_categories: list[str] | None = None
+    preserve_calendar_categories: list[str] | None = None
     exclude_private_meetings: bool | None = None
     organization_label: str | None = None
 
@@ -524,6 +613,7 @@ async def get_prefs() -> Prefs:
         high_impact_keywords=_read_high_impact_keywords(),
         high_impact_calendar_categories=_read_high_impact_categories(),
         umbrella_calendar_categories=_read_umbrella_categories(),
+        preserve_calendar_categories=_read_preserve_categories(),
         exclude_private_meetings=_read_exclude_private(),
         organization_label=get_organization_label(),
         organization_label_auto=is_organization_auto(),
@@ -573,6 +663,9 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
     if update.umbrella_calendar_categories is not None:
         cleaned_umb = _normalize_umbrella_categories(update.umbrella_calendar_categories)
         prefs_store.set_pref(PREF_UMBRELLA_CATEGORIES, json.dumps(cleaned_umb))
+    if update.preserve_calendar_categories is not None:
+        cleaned_pres = _normalize_preserve_categories(update.preserve_calendar_categories)
+        prefs_store.set_pref(PREF_PRESERVE_CATEGORIES, json.dumps(cleaned_pres))
     if update.exclude_private_meetings is not None:
         prefs_store.set_pref(
             PREF_EXCLUDE_PRIVATE, "true" if update.exclude_private_meetings else "false"

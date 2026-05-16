@@ -104,10 +104,10 @@ def test_merge_inserts_new_entry_when_no_match():
     )
     entries_repo.merge_week(
         WEEK,
-        [_entry("CTC - AVS ANF", category="Customer", block_ids=[99])],
+        [_entry("Contoso- Azure Landing Zone ANF", category="Customer", block_ids=[99])],
     )
     labels = {r.label for r in _all_rows()}
-    assert labels == {"Standup", "CTC - AVS ANF"}
+    assert labels == {"Standup", "Contoso- Azure Landing Zone ANF"}
 
 
 def test_merge_preserves_user_edited_row():
@@ -200,7 +200,7 @@ def test_merge_does_not_regress_real_category_to_other():
 def test_merge_does_not_regress_real_category_to_admin():
     entries_repo.merge_week(
         WEEK,
-        [_entry("Customer – CTC AVS", category="Customer", block_ids=[200], hours=2.0)],
+        [_entry("Customer – ContosoAzure Landing Zone", category="Customer", block_ids=[200], hours=2.0)],
     )
     # Subsequent scan with stripped metadata bucketed under Admin gap-fill.
     entries_repo.merge_week(
@@ -210,7 +210,7 @@ def test_merge_does_not_regress_real_category_to_admin():
     rows = _all_rows()
     assert len(rows) == 1
     assert rows[0].category == "Customer"
-    assert rows[0].label == "Customer – CTC AVS"
+    assert rows[0].label == "Customer – ContosoAzure Landing Zone"
 
 
 def test_merge_accepts_real_category_change_between_two_real_categories():
@@ -338,7 +338,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
     with get_session() as s:
         for row in (
             TimeEntryRow(
-                label="Service – Re: TD Win Wire",
+                label="Service – Re: FabrikamWin Wire",
                 category="Service",
                 duration_hours=0.5,
                 confidence="medium",
@@ -360,7 +360,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
                 sources="",
             ),
             TimeEntryRow(
-                label="Customer – CTC - AVS ANF",
+                label="Customer – Contoso- Azure Landing Zone ANF",
                 category="Customer",
                 duration_hours=1.0,
                 confidence="high",
@@ -374,9 +374,9 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
             s.add(row)
         s.commit()
     entries = {e.label: e.sources for e in entries_repo.list_entries(week_of=WEEK)}
-    assert entries["Service – Re: TD Win Wire"] == ["email"]
+    assert entries["Service – Re: FabrikamWin Wire"] == ["email"]
     assert entries["Other – Chat with Ashton"] == ["teams"]
-    assert entries["Customer – CTC - AVS ANF"] == ["unknown"]
+    assert entries["Customer – Contoso- Azure Landing Zone ANF"] == ["unknown"]
 
 
 def test_list_entries_does_not_backfill_manual_rows_without_sources():

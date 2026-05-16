@@ -34,7 +34,7 @@ def _b(title, *, categories_display=None, participants=(), hours=1.0):
 
 
 def test_extract_first_segment_for_dash_separator():
-    assert _extract_category_from_title("CTC - AVS ANF") == "CTC"
+    assert _extract_category_from_title("Contoso- Azure Landing Zone ANF") == "Contoso"
 
 
 def test_extract_first_segment_for_endash_separator():
@@ -42,7 +42,7 @@ def test_extract_first_segment_for_endash_separator():
 
 
 def test_extract_first_segment_for_colon_separator():
-    assert _extract_category_from_title("TD: KO sync") == "TD"
+    assert _extract_category_from_title("Fabrikam: KO sync") == "Fabrikam"
 
 
 def test_extract_returns_none_when_no_separator():
@@ -55,7 +55,7 @@ def test_extract_returns_none_for_empty_or_whitespace():
 
 
 def test_extract_skips_stopword_first_segment():
-    assert _extract_category_from_title("Weekly - CTC sync") == "CTC sync"
+    assert _extract_category_from_title("Weekly - Contososync") == "Contososync"
 
 
 def test_extract_skips_all_stopwords_returns_none():
@@ -73,17 +73,17 @@ def test_extract_rejects_overlong_segment():
 
 
 def test_umbrella_customer_extracts_specific_code_from_title():
-    block = _b("CTC - AVS ANF", categories_display="Customer")
+    block = _b("Contoso- Azure Landing Zone ANF", categories_display="Customer")
     label, cat = categorize(block, umbrella_categories=["Customer"])
-    assert cat == "CTC"
+    assert cat == "Contoso"
     # Label should not double-up the category name.
-    assert label == "CTC \u2013 CTC - AVS ANF" or label == "CTC - AVS ANF"
+    assert label == "Contoso\u2013 Contoso- Azure Landing Zone ANF" or label == "Contoso- Azure Landing Zone ANF"
 
 
 def test_umbrella_customer_extracts_td_from_title():
-    block = _b("TD - KO", categories_display="Customer")
+    block = _b("Fabrikam- KO", categories_display="Customer")
     _label, cat = categorize(block, umbrella_categories=["Customer"])
-    assert cat == "TD"
+    assert cat == "Fabrikam"
 
 
 def test_non_umbrella_category_is_used_verbatim():
@@ -94,9 +94,9 @@ def test_non_umbrella_category_is_used_verbatim():
 
 
 def test_umbrella_match_is_case_insensitive():
-    block = _b("CTC - AVS ANF", categories_display="customer")
+    block = _b("Contoso- Azure Landing Zone ANF", categories_display="customer")
     _label, cat = categorize(block, umbrella_categories=["Customer"])
-    assert cat == "CTC"
+    assert cat == "Contoso"
 
 
 def test_umbrella_falls_back_to_external_participant_when_no_separator():
@@ -122,7 +122,7 @@ def test_umbrella_falls_back_to_raw_tag_when_no_signal():
 
 
 def test_no_umbrellas_configured_uses_outlook_tag_verbatim():
-    block = _b("CTC - AVS", categories_display="Customer")
+    block = _b("Contoso- Azure Landing Zone", categories_display="Customer")
     _label, cat = categorize(block, umbrella_categories=[])
     assert cat == "Customer"
 
@@ -132,17 +132,17 @@ def test_no_umbrellas_configured_uses_outlook_tag_verbatim():
 
 def test_aggregate_groups_separately_by_extracted_code():
     blocks = [
-        _b("CTC - AVS ANF", categories_display="Customer"),
-        _b("CTC - migration", categories_display="Customer"),
-        _b("TD - KO", categories_display="Customer"),
+        _b("Contoso- Azure Landing Zone ANF", categories_display="Customer"),
+        _b("Contoso- migration", categories_display="Customer"),
+        _b("Fabrikam- KO", categories_display="Customer"),
     ]
     entries = aggregate_entries(blocks, umbrella_categories=["Customer"])
     categories = [e.category for e in entries]
-    # Two distinct CTC events (different titles, so different labels) plus
-    # one TD event — the win is they now share the CTC / TD bucket
+    # Two distinct Contosoevents (different titles, so different labels) plus
+    # one Fabrikamevent — the win is they now share the Contoso/ Fabrikambucket
     # instead of all collapsing into a single "Customer" bucket.
-    assert categories.count("CTC") == 2
-    assert categories.count("TD") == 1
+    assert categories.count("Contoso") == 2
+    assert categories.count("Fabrikam") == 1
     assert "Customer" not in categories
-    ctc_hours = sum(e.duration_hours for e in entries if e.category == "CTC")
+    ctc_hours = sum(e.duration_hours for e in entries if e.category == "Contoso")
     assert ctc_hours == 2.0
