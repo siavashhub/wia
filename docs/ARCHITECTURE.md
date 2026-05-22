@@ -10,11 +10,14 @@
 │ FastAPI in-process                             │
 │  ├─ /api/health, /api/workiq, /api/briefing,   │
 │  │  /api/entries, /api/prefs, /api/review,     │
-│  │  /api/schedule, /api/export                 │
+│  │  /api/schedule, /api/export, /api/actions   │
 │  ├─ core.orchestrator (Work IQ → blocks →      │
 │  │  entries; grouping + categorization;        │
 │  │  cache-aware on refresh=false)              │
-│  └─ SQLite (time_entry, user_pref, scan_history)│
+│  ├─ core.actions (suggester registry: follow_up│
+│  │  + decision_note; draft generators)         │
+│  └─ SQLite (time_entry, action, user_pref,     │
+│     scan_history)                              │
 └────────┬───────────────────────────────────────┘
          │ MCP stdio (spawns Node child process)
 ┌────────▼──────────────────────────────────────┐
@@ -46,16 +49,18 @@
 | `wia.api.review` | Weekly review summary endpoint |
 | `wia.api.schedule` | Scheduler config + run-now + scan history |
 | `wia.api.export` | CSV / Markdown / HTML / clipboard exports |
-| `wia.core.types` | Pydantic domain models (`ActivityBlock`, `TimeEntry`, `Briefing`, `Confidence`, `Source`) |
+| `wia.api.actions` | WIA Actions CRUD + `/draft` artifact endpoint |
+| `wia.core.types` | Pydantic domain models (`ActivityBlock`, `TimeEntry`, `Briefing`, `Action`, `Confidence`, `Source`) |
 | `wia.core.week` | Mon–Sun week math and weekday iteration |
 | `wia.core.grouping` | Merge adjacent same-source blocks; gap-fill weekday Admin/Focus |
 | `wia.core.categorization` | Rule-based labeling (external-domain → client, keyword fallback) |
-| `wia.core.orchestrator` | End-to-end briefing build (cache-aware) |
+| `wia.core.orchestrator` | End-to-end briefing build (cache-aware); runs action suggesters after entry merge |
 | `wia.core.scheduler` | Background weekly scan trigger |
 | `wia.core.review` | Weekly review aggregation |
+| `wia.core.actions` | Suggester registry (`follow_up`, `decision_note`) + draft generators (`drafts/email.py`, `drafts/note.py`) |
 | `wia.mcp_clients.workiq` | Work IQ MCP stdio client + CLI probe/enable |
-| `wia.mcp_server.server` | WIA's exposed MCP server (`wia-mcp`) |
-| `wia.storage` | SQLite persistence (`entries`, `prefs`, `scan_history`) |
+| `wia.mcp_server.server` | WIA's exposed MCP server (`wia-mcp`) — briefing, entries, actions, export |
+| `wia.storage` | SQLite persistence (`entries`, `actions`, `prefs`, `scan_history`) |
 
 ## Authentication
 
@@ -93,3 +98,16 @@ When the briefing is served from cache (no live blocks), totals are derived from
 | `LOW` | Gap-fill inference (`Admin / Follow-up`, `Focus time`) | `Source.INFERRED` |
 
 `TimeEntry.confidence` collapses to the lowest level among its constituent blocks, so a calendar meeting that picked up a co-occurring Teams thread reports `MEDIUM`. Cached briefings use confidence as the source proxy because `TimeEntry` rows don't persist `Source`.
+
+## WIA Actions
+
+The actions layer ([core/actions/](../apps/wia-desktop/src/wia/core/actions/), [api/actions.py](../apps/wia-desktop/src/wia/api/actions.py), [storage/actions.py](../apps/wia-desktop/src/wia/storage/actions.py)) turns the briefing into a small set of concrete, user-actionable suggestions. See [wia-action.md](../apps/wia-desktop/docs/wia-action.md) for the full product spec.
+
+- **Suggesters** are pure functions over a `SuggesterContext` (`week_of`, `entries`, `dismissed_dedupe_keys`). Each produces zero or more `ActionCandidate`s.
+  - `follow_up` — fires on entries whose notes mention sending recap / minutes / next steps, or whose labels look like a kickoff / debrief / retro / planning / QBR.
+  - `decision_note` — fires on entries whose notes mention a decision (decided / agreed / approved / sign-off / go-no-go), or whose labels look like a decision / review / approval.
+- The orchestrator runs the suggester registry after `entries_repo.merge_week`. `storage.actions.upsert_candidates` is dedupe-key based (`"{kind}:{week_of}:{entry_id}"`) and never overwrites user-set status — re-running a scan only refreshes cosmetic fields (title, rationale, payload) on already-suggested rows.
+- **Status machine:** `suggested → {accepted, snoozed, dismissed, completed}`. Dismissed dedupe keys are fed back into the next suggester run so a dismissed card never resurfaces for the same `(kind, week, entry)`.
+- **Drafts** are read-only artifact generators ([drafts/email.py](../apps/wia-desktop/src/wia/core/actions/drafts/email.py), [drafts/note.py](../apps/wia-desktop/src/wia/core/actions/drafts/note.py)). `POST /api/actions/{id}/draft` returns an email shape (`subject`/`body`/`mailto:` URL) for `follow_up` or a Markdown shape (`filename`/`body`) for `decision_note`. Drafting never mutates status — the user decides what to do with the artifact.
+- The UI Actions tab lazy-loads from `GET /api/actions` and offers Draft / Accept / Snooze / Dismiss / Mark done. Email drafts open via `mailto:` (clipboard backup); Markdown drafts route through the pywebview `save_file` bridge with a Blob URL fallback.
+- The MCP server (`wia-mcp`) re-exposes the same surface to external agents via `list_actions` and `update_action`.
