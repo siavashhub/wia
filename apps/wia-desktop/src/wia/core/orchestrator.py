@@ -26,6 +26,30 @@ from wia.storage import entries as entries_repo
 log = logging.getLogger(__name__)
 
 
+def _run_action_suggesters(week_iso: str) -> None:
+    """Generate WIA Actions suggestions for the just-scanned week.
+
+    Imported lazily and wrapped in a broad try/except: a bug in the
+    actions pipeline must never break the user's briefing.
+    """
+    try:
+        from wia.core.actions import SuggesterContext, run_all
+        from wia.storage import actions as actions_repo
+
+        entries = entries_repo.list_entries(week_of=week_iso)
+        ctx = SuggesterContext(
+            week_of=week_iso,
+            entries=entries,
+            dismissed_dedupe_keys=actions_repo.list_dismissed_dedupe_keys(),
+        )
+        candidates = run_all(ctx)
+        if candidates:
+            actions_repo.upsert_candidates(week_iso, candidates)
+            log.info("Generated %d action candidate(s) for %s", len(candidates), week_iso)
+    except Exception:
+        log.exception("Action suggesters failed for %s", week_iso)
+
+
 def _totals(blocks: list[ActivityBlock]) -> BriefingTotals:
     meetings = sum(b.duration_hours for b in blocks if b.source is Source.CALENDAR)
     focus = sum(
@@ -405,6 +429,10 @@ async def build_briefing(
     # calls ``entries_repo.delete_week``) for a clean rebuild.
     entries_repo.merge_week(week_iso, entries)
     entries = entries_repo.list_entries(week_of=week_iso)
+
+    # WIA Actions: derive suggested next steps from the persisted entries.
+    # Best-effort — failures here never affect the briefing response.
+    _run_action_suggesters(week_iso)
 
     return Briefing(
         week_start=monday.isoformat(),

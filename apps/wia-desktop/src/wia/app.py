@@ -11,7 +11,18 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from wia.api import briefing, entries, export, health, prefs, review, schedule, updates, workiq
+from wia.api import (
+    actions,
+    briefing,
+    entries,
+    export,
+    health,
+    prefs,
+    review,
+    schedule,
+    updates,
+    workiq,
+)
 from wia.config import get_settings
 from wia.core.scheduler import get_scheduler
 from wia.logging_setup import configure_logging
@@ -66,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(workiq.router, prefix="/api/workiq", tags=["workiq"])
     app.include_router(briefing.router, prefix="/api/briefing", tags=["briefing"])
     app.include_router(entries.router, prefix="/api/entries", tags=["entries"])
+    app.include_router(actions.router, prefix="/api/actions", tags=["actions"])
     app.include_router(export.router, prefix="/api/export", tags=["export"])
     app.include_router(schedule.router, prefix="/api/schedule", tags=["schedule"])
     app.include_router(prefs.router, prefix="/api/prefs", tags=["prefs"])

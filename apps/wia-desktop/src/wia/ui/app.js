@@ -106,7 +106,7 @@ function wia() {
     _systemThemeMql: null,
 
     // ---- Review state ----------------------------------------------------
-    view: 'briefing', // 'briefing' | 'review'
+    view: 'briefing', // 'briefing' | 'review' | 'actions'
     review: null,
     reviewLoading: false,
     reviewError: null,
@@ -124,6 +124,19 @@ function wia() {
       { key: 'challenges', label: 'Challenges' },
       { key: 'asks', label: 'Asks for my manager' },
     ],
+
+    // ---- Actions state ---------------------------------------------------
+    // WIA Actions: rule-based suggestions surfaced after each scan. The
+    // list is loaded lazily on first tab open and refreshed manually or
+    // after any state transition. ``actionBusy`` tracks per-id mutations
+    // so the buttons can disable themselves without blocking the rest of
+    // the list.
+    actions: [],
+    actionsLoading: false,
+    actionsError: null,
+    actionsIncludeResolved: false,
+    actionBusy: {},
+    _actionsLoaded: false,
 
     async init() {
       const now = new Date();
@@ -1611,6 +1624,9 @@ function wia() {
       if (v === 'review' && !this.review && !this.reviewLoading) {
         this.loadReview();
       }
+      if (v === 'actions' && !this._actionsLoaded && !this.actionsLoading) {
+        this.loadActions();
+      }
     },
 
     setReviewKind(kind) {
@@ -1813,6 +1829,129 @@ function wia() {
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       } catch (e) { this.reviewError = `Export failed: ${e}`; }
+    },
+
+    // ---- Actions ---------------------------------------------------------
+    openActionCount() {
+      // Count the actions the user hasn't resolved yet. Drives the badge
+      // on the Actions tab so users notice new suggestions.
+      return (this.actions || []).filter(
+        (a) => a.status === 'suggested' || a.status === 'accepted',
+      ).length;
+    },
+
+    async loadActions() {
+      this.actionsError = null;
+      this.actionsLoading = true;
+      try {
+        const params = new URLSearchParams();
+        if (this.actionsIncludeResolved) params.set('include_resolved', 'true');
+        const qs = params.toString();
+        const r = await fetch(`/api/actions${qs ? '?' + qs : ''}`);
+        if (!r.ok) throw new Error(await r.text());
+        this.actions = await r.json();
+        this._actionsLoaded = true;
+      } catch (e) {
+        this.actionsError = `Load actions failed: ${e}`;
+      } finally {
+        this.actionsLoading = false;
+      }
+    },
+
+    async actionTransition(id, verb) {
+      // Generic helper for accept / complete / dismiss. ``verb`` maps
+      // 1:1 to the API path segment.
+      this.actionsError = null;
+      this.actionBusy[id] = true;
+      try {
+        const body = verb === 'dismiss' ? JSON.stringify({}) : null;
+        const r = await fetch(`/api/actions/${id}/${verb}`, {
+          method: 'POST',
+          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          body,
+        });
+        if (!r.ok) throw new Error(await r.text());
+        // Refresh the list rather than splicing in place — that way the
+        // resolved-filter and ordering match what the server returns.
+        await this.loadActions();
+      } catch (e) {
+        this.actionsError = `Action update failed: ${e}`;
+      } finally {
+        delete this.actionBusy[id];
+      }
+    },
+
+    async snoozeAction(id) {
+      this.actionsError = null;
+      this.actionBusy[id] = true;
+      try {
+        // One week out — the common-case snooze. Custom durations land in
+        // a later slice; keep the v0.4 UI deliberately small.
+        const until = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        const r = await fetch(`/api/actions/${id}/snooze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snoozed_until: until }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        await this.loadActions();
+      } catch (e) {
+        this.actionsError = `Snooze failed: ${e}`;
+      } finally {
+        delete this.actionBusy[id];
+      }
+    },
+
+    async draftAction(a) {
+      // Generate the kind-specific artifact and deliver it.
+      //
+      //   follow_up      -> open ``mailto:`` in the OS default mail client
+      //                     and copy the body to the clipboard as a backup
+      //                     (WebView2 ``mailto:`` handling can occasionally
+      //                     drop very long bodies).
+      //   decision_note  -> save the Markdown via the pywebview save_file
+      //                     bridge when available, otherwise download via
+      //                     a Blob URL. Falls back to clipboard if both
+      //                     paths fail.
+      this.actionsError = null;
+      this.actionBusy[a.id] = true;
+      try {
+        const r = await fetch(`/api/actions/${a.id}/draft`, { method: 'POST' });
+        if (!r.ok) throw new Error(await r.text());
+        const draft = await r.json();
+        if (draft.kind === 'email') {
+          try {
+            await navigator.clipboard?.writeText?.(draft.body);
+          } catch (_) { /* clipboard is best-effort */ }
+          // Use location.href instead of window.open — WebView2 blocks
+          // window.open for non-http(s) schemes by default but honours
+          // navigation to ``mailto:``.
+          window.location.href = draft.mailto;
+          this.actionsError = null;
+        } else if (draft.kind === 'markdown') {
+          const filename = draft.filename || 'decision-note.md';
+          if (window.pywebview?.api?.save_file) {
+            await window.pywebview.api.save_file(
+              filename,
+              draft.body,
+              ['Markdown (*.md)', 'All files (*.*)'],
+            );
+          } else {
+            const blob = new Blob([draft.body], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url; link.download = filename;
+            document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+          }
+        } else {
+          throw new Error(`Unknown draft kind ${draft.kind}`);
+        }
+      } catch (e) {
+        this.actionsError = `Draft failed: ${e}`;
+      } finally {
+        delete this.actionBusy[a.id];
+      }
     },
   };
 }

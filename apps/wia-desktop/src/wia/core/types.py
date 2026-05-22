@@ -194,3 +194,60 @@ class Review(BaseModel):
     missing_weeks: list[str] = Field(default_factory=list)
     # Total number of past-or-current weeks that intersect the period.
     expected_weeks: int = 0
+
+
+# ---------------------------------------------------------------------------
+# WIA Actions — suggested next steps derived from briefing entries
+# ---------------------------------------------------------------------------
+
+
+class ActionKind(StrEnum):
+    """Enumerates the rule-based suggesters WIA ships with."""
+
+    FOLLOW_UP = "follow_up"
+    DECISION_NOTE = "decision_note"
+
+
+class ActionStatus(StrEnum):
+    """Lifecycle for a single suggested action.
+
+    ``suggested`` is the default state for a freshly produced candidate.
+    ``accepted`` means the user committed to do it (no side-effects yet
+    in v0.4). ``completed`` is the terminal "done" state. ``snoozed``
+    rows reappear once ``snoozed_until`` passes; ``dismissed`` rows are
+    suppressed and used as a learning signal for future scans.
+    """
+
+    SUGGESTED = "suggested"
+    ACCEPTED = "accepted"
+    SNOOZED = "snoozed"
+    DISMISSED = "dismissed"
+    COMPLETED = "completed"
+
+
+class Action(BaseModel):
+    """A persisted suggestion shown in the WIA Actions tab."""
+
+    id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    week_of: str
+    kind: ActionKind
+    title: str
+    rationale: str
+    source_entry_id: int | None = None
+    dedupe_key: str
+    payload: dict = Field(default_factory=dict)
+    status: ActionStatus = ActionStatus.SUGGESTED
+    priority: int = 50
+    snoozed_until: datetime | None = None
+    completed_at: datetime | None = None
+    dismissed_reason: str | None = None
+
+
+class ActionUpdate(BaseModel):
+    """PATCH payload for ``/api/actions/{id}``-style mutations."""
+
+    status: ActionStatus | None = None
+    snoozed_until: datetime | None = None
+    dismissed_reason: str | None = None

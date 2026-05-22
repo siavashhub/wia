@@ -62,3 +62,33 @@ class ScanHistoryRow(SQLModel, table=True):
     status: str  # briefing.status, or "error: ..." on failure
     entry_count: int = 0
     duration_ms: int = 0
+
+
+class ActionRow(SQLModel, table=True):
+    """A WIA Actions suggestion persisted across rescans.
+
+    ``dedupe_key`` is the stable identity of a suggestion — orchestrator
+    rescans upsert by this key so a re-scan never produces duplicate
+    rows for the same underlying signal. Status changes (accept /
+    snooze / dismiss / complete) are stored in-place; ``dismissed``
+    rows are kept so future scans can suppress them as a learning
+    signal.
+    """
+
+    __tablename__ = "action"
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime
+    updated_at: datetime
+    week_of: str = Field(index=True)
+    kind: str  # ActionKind value
+    title: str
+    rationale: str
+    source_entry_id: int | None = Field(default=None, index=True)
+    dedupe_key: str = Field(index=True, unique=True)
+    payload: str = ""  # JSON-encoded dict
+    status: str = "suggested"  # ActionStatus value
+    priority: int = 50
+    snoozed_until: datetime | None = None
+    completed_at: datetime | None = None
+    dismissed_reason: str | None = None
