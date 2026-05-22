@@ -37,6 +37,25 @@ def test_fill_gaps_inserts_admin_and_focus():
     assert "Focus time" in titles
 
 
+def test_fill_gaps_skips_day_already_saturated():
+    """If the day's existing blocks already sum to a full work day,
+    don't synthesise more Admin / Focus time on top — that would
+    double-count when the user has many short Teams / email blocks
+    totalling > 8h but not occupying contiguous wall-clock time."""
+    # 10 hours of Teams / email engagement, spread across short blocks
+    # that leave plenty of wall-clock gaps in 9-17.
+    blocks = [
+        _b(9, 10, "Teams chat A", source=Source.TEAMS),
+        _b(11, 13, "Email thread A", source=Source.EMAIL),
+        _b(14, 15, "Teams chat B", source=Source.TEAMS),
+        _b(15, 21, "Email thread B", source=Source.EMAIL),  # extends past 17:00
+    ]
+    days = [datetime(2026, 4, 20, 0, 0, tzinfo=UTC)]
+    out = fill_gaps(blocks, days)
+    inferred_titles = [b.title for b in out if b.source is Source.INFERRED]
+    assert inferred_titles == []
+
+
 # --- cross-source dedup ---
 
 

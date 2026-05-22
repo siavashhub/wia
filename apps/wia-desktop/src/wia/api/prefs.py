@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -30,6 +31,25 @@ PREF_ORGANIZATION = "organization_label"
 PREF_ORGANIZATION_AUTO = "organization_label_auto"  # 1 if value was auto-derived
 PREF_USER_UPN = "user_upn"
 PREF_USER_DISPLAY_NAME = "user_display_name"
+# Noise-reduction prefs (added in hotfix/0.3.1). Together they let the user
+# drop calendar meetings they never actually attended (declined / no-
+# response / optional in a large invite list), short-circuit dust-sized
+# email threads, and treat sister-company domains as internal so the
+# categorizer doesn't bucket them as "clients".
+PREF_ADDITIONAL_INTERNAL_DOMAINS = "additional_internal_domains"
+PREF_EXCLUDE_DECLINED = "exclude_declined_meetings"
+PREF_EXCLUDE_NO_RESPONSE = "exclude_no_response_meetings"
+PREF_EXCLUDE_OPTIONAL_LARGE = "exclude_optional_large_meetings"
+PREF_OPTIONAL_LARGE_MIN_ATTENDEES = "optional_large_meeting_min_attendees"
+PREF_MIN_EMAIL_THREAD_HOURS = "min_email_thread_hours"
+# Drop Teams chat / channel-thread blocks the user only read passively
+# (Work IQ returns ``iParticipated=false`` when no message was sent, no
+# reaction posted, and no call audio joined). Calls without messages are
+# spared because Work IQ marks them ``iParticipated=true`` for the
+# attendees. Missing metadata is treated as "unknown" and never causes
+# a drop — the orchestrator logs a WARNING so the user can tell when
+# Work IQ has stopped returning the field.
+PREF_EXCLUDE_PASSIVE_TEAMS = "exclude_passive_teams_threads"
 
 # Sensitivity values (Outlook) considered "private" for the toggle.
 PRIVATE_SENSITIVITIES = frozenset({"private", "personal", "confidential"})
@@ -49,6 +69,32 @@ MAX_UMBRELLA_CATEGORY_LENGTH = 100
 MAX_PRESERVE_CATEGORIES = 100
 MAX_PRESERVE_CATEGORY_LENGTH = 100
 MAX_ORGANIZATION_LENGTH = 100
+MAX_ADDITIONAL_INTERNAL_DOMAINS = 100
+MAX_INTERNAL_DOMAIN_LENGTH = 253  # RFC 1035 max DNS name length
+# Bounds for the numeric noise-reduction prefs. Wide enough to cover any
+# real use-case but tight enough that a runaway UI / API caller can't
+# poison the briefing pipeline.
+MIN_OPTIONAL_LARGE_THRESHOLD = 2
+MAX_OPTIONAL_LARGE_THRESHOLD = 10_000
+MAX_MIN_EMAIL_THREAD_HOURS = 24.0
+DEFAULT_OPTIONAL_LARGE_THRESHOLD = 20
+DEFAULT_MIN_EMAIL_THREAD_HOURS = 0.1
+DEFAULT_EXCLUDE_DECLINED = True
+DEFAULT_EXCLUDE_NO_RESPONSE = True
+DEFAULT_EXCLUDE_OPTIONAL_LARGE = True
+DEFAULT_EXCLUDE_PASSIVE_TEAMS = True
+
+# Domains that belong to the user's own "company family" but don't share
+# the primary corporate domain. Seeded into ``additional_internal_domains``
+# only when the user's organization_label resolves to Microsoft so users
+# at other orgs don't get a Microsoft-flavoured default. Users can edit
+# the list freely once it's been seeded.
+MICROSOFT_FAMILY_DOMAINS: list[str] = [
+    "github.com",
+    "linkedin.com",
+    "xbox.com",
+    "ghe.com",
+]
 
 # Outlook calendar categories treated as "umbrella" tags — the categoriser
 # uses them as a *signal* that an event belongs in a customer/client/vendor
@@ -568,6 +614,154 @@ def set_user_identity(upn: str, display_name: str | None) -> None:
     prefs_store.set_pref(PREF_USER_DISPLAY_NAME, (display_name or "").strip()[:200])
 
 
+# --- Noise-reduction prefs (additional_internal_domains + attendance filters) -----
+
+_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$")
+
+
+def _organization_is_microsoft() -> bool:
+    """Return True when the user's organization_label resolves to Microsoft.
+
+    Used purely to decide whether to seed ``additional_internal_domains``
+    with :data:`MICROSOFT_FAMILY_DOMAINS` for first-time users at MS.
+    """
+    label = (get_organization_label() or "").strip().lower()
+    if label == "microsoft":
+        return True
+    upn = (prefs_store.get_pref(PREF_USER_UPN) or "").strip().lower()
+    if "@" in upn:
+        domain = upn.split("@", 1)[1]
+        if domain in {"microsoft.com", "service.microsoft.com"} or domain.endswith(
+            ".microsoft.com"
+        ):
+            return True
+    return False
+
+
+def _read_additional_internal_domains() -> list[str]:
+    """Return the user-configured extra domains to treat as internal.
+
+    A missing pref (the user has never touched the setting) seeds the
+    list with :data:`MICROSOFT_FAMILY_DOMAINS` *only* for Microsoft
+    users — non-MS users default to an empty list. An explicit empty
+    list (the user cleared the pref) is honoured.
+    """
+    raw = prefs_store.get_pref(PREF_ADDITIONAL_INTERNAL_DOMAINS)
+    if raw is None:
+        return list(MICROSOFT_FAMILY_DOMAINS) if _organization_is_microsoft() else []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for d in parsed:
+        if not isinstance(d, str):
+            continue
+        cleaned = d.strip().lower()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
+
+
+def _normalize_additional_internal_domains(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            raise HTTPException(
+                status_code=400,
+                detail="additional_internal_domains must all be strings",
+            )
+        cleaned = raw.strip().lower().lstrip("@")
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_INTERNAL_DOMAIN_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"domain exceeds {MAX_INTERNAL_DOMAIN_LENGTH} chars: {cleaned[:32]!r}\u2026"
+                ),
+            )
+        if not _DOMAIN_RE.match(cleaned) or ".." in cleaned:
+            raise HTTPException(
+                status_code=400,
+                detail=f"invalid domain: {cleaned!r}",
+            )
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    if len(out) > MAX_ADDITIONAL_INTERNAL_DOMAINS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"at most {MAX_ADDITIONAL_INTERNAL_DOMAINS} additional internal domains allowed"
+            ),
+        )
+    return out
+
+
+def get_additional_internal_domains() -> list[str]:
+    """Public helper used by the orchestrator: extra email domains the
+    user wants treated as part of their own organisation (so the
+    categorizer doesn't bucket them as a 'client')."""
+    return _read_additional_internal_domains()
+
+
+def _read_bool_pref(key: str, default: bool) -> bool:
+    raw = prefs_store.get_pref(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_exclude_declined_meetings() -> bool:
+    return _read_bool_pref(PREF_EXCLUDE_DECLINED, DEFAULT_EXCLUDE_DECLINED)
+
+
+def get_exclude_no_response_meetings() -> bool:
+    return _read_bool_pref(PREF_EXCLUDE_NO_RESPONSE, DEFAULT_EXCLUDE_NO_RESPONSE)
+
+
+def get_exclude_optional_large_meetings() -> bool:
+    return _read_bool_pref(PREF_EXCLUDE_OPTIONAL_LARGE, DEFAULT_EXCLUDE_OPTIONAL_LARGE)
+
+
+def get_exclude_passive_teams_threads() -> bool:
+    return _read_bool_pref(PREF_EXCLUDE_PASSIVE_TEAMS, DEFAULT_EXCLUDE_PASSIVE_TEAMS)
+
+
+def get_optional_large_meeting_min_attendees() -> int:
+    raw = prefs_store.get_pref(PREF_OPTIONAL_LARGE_MIN_ATTENDEES)
+    if raw is None:
+        return DEFAULT_OPTIONAL_LARGE_THRESHOLD
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_OPTIONAL_LARGE_THRESHOLD
+    if value < MIN_OPTIONAL_LARGE_THRESHOLD or value > MAX_OPTIONAL_LARGE_THRESHOLD:
+        return DEFAULT_OPTIONAL_LARGE_THRESHOLD
+    return value
+
+
+def get_min_email_thread_hours() -> float:
+    raw = prefs_store.get_pref(PREF_MIN_EMAIL_THREAD_HOURS)
+    if raw is None:
+        return DEFAULT_MIN_EMAIL_THREAD_HOURS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_EMAIL_THREAD_HOURS
+    if value < 0 or value > MAX_MIN_EMAIL_THREAD_HOURS:
+        return DEFAULT_MIN_EMAIL_THREAD_HOURS
+    return value
+
+
 class Prefs(BaseModel):
     theme: str = "system"
     enabled_signals: list[str] = Field(default_factory=lambda: list(DEFAULT_SIGNALS))
@@ -585,6 +779,13 @@ class Prefs(BaseModel):
     organization_label_auto: bool = False
     user_upn: str = ""
     user_display_name: str = ""
+    additional_internal_domains: list[str] = Field(default_factory=list)
+    exclude_declined_meetings: bool = DEFAULT_EXCLUDE_DECLINED
+    exclude_no_response_meetings: bool = DEFAULT_EXCLUDE_NO_RESPONSE
+    exclude_optional_large_meetings: bool = DEFAULT_EXCLUDE_OPTIONAL_LARGE
+    optional_large_meeting_min_attendees: int = DEFAULT_OPTIONAL_LARGE_THRESHOLD
+    min_email_thread_hours: float = DEFAULT_MIN_EMAIL_THREAD_HOURS
+    exclude_passive_teams_threads: bool = DEFAULT_EXCLUDE_PASSIVE_TEAMS
 
 
 class PrefsUpdate(BaseModel):
@@ -599,6 +800,13 @@ class PrefsUpdate(BaseModel):
     preserve_calendar_categories: list[str] | None = None
     exclude_private_meetings: bool | None = None
     organization_label: str | None = None
+    additional_internal_domains: list[str] | None = None
+    exclude_declined_meetings: bool | None = None
+    exclude_no_response_meetings: bool | None = None
+    exclude_optional_large_meetings: bool | None = None
+    optional_large_meeting_min_attendees: int | None = None
+    min_email_thread_hours: float | None = None
+    exclude_passive_teams_threads: bool | None = None
 
 
 @router.get("")
@@ -619,6 +827,13 @@ async def get_prefs() -> Prefs:
         organization_label_auto=is_organization_auto(),
         user_upn=upn,
         user_display_name=display,
+        additional_internal_domains=get_additional_internal_domains(),
+        exclude_declined_meetings=get_exclude_declined_meetings(),
+        exclude_no_response_meetings=get_exclude_no_response_meetings(),
+        exclude_optional_large_meetings=get_exclude_optional_large_meetings(),
+        optional_large_meeting_min_attendees=get_optional_large_meeting_min_attendees(),
+        min_email_thread_hours=get_min_email_thread_hours(),
+        exclude_passive_teams_threads=get_exclude_passive_teams_threads(),
     )
 
 
@@ -681,4 +896,47 @@ async def update_prefs(update: PrefsUpdate) -> Prefs:
         # user-confirmed so the orchestrator won't overwrite it on the
         # next scan's auto-derive pass.
         set_organization_label(cleaned_org, auto=False)
+    if update.additional_internal_domains is not None:
+        cleaned_dom = _normalize_additional_internal_domains(update.additional_internal_domains)
+        prefs_store.set_pref(PREF_ADDITIONAL_INTERNAL_DOMAINS, json.dumps(cleaned_dom))
+    if update.exclude_declined_meetings is not None:
+        prefs_store.set_pref(
+            PREF_EXCLUDE_DECLINED, "true" if update.exclude_declined_meetings else "false"
+        )
+    if update.exclude_no_response_meetings is not None:
+        prefs_store.set_pref(
+            PREF_EXCLUDE_NO_RESPONSE,
+            "true" if update.exclude_no_response_meetings else "false",
+        )
+    if update.exclude_optional_large_meetings is not None:
+        prefs_store.set_pref(
+            PREF_EXCLUDE_OPTIONAL_LARGE,
+            "true" if update.exclude_optional_large_meetings else "false",
+        )
+    if update.optional_large_meeting_min_attendees is not None:
+        n = update.optional_large_meeting_min_attendees
+        if n < MIN_OPTIONAL_LARGE_THRESHOLD or n > MAX_OPTIONAL_LARGE_THRESHOLD:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "optional_large_meeting_min_attendees must be between "
+                    f"{MIN_OPTIONAL_LARGE_THRESHOLD} and {MAX_OPTIONAL_LARGE_THRESHOLD}"
+                ),
+            )
+        prefs_store.set_pref(PREF_OPTIONAL_LARGE_MIN_ATTENDEES, str(n))
+    if update.min_email_thread_hours is not None:
+        h = float(update.min_email_thread_hours)
+        if h < 0 or h > MAX_MIN_EMAIL_THREAD_HOURS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"min_email_thread_hours must be between 0 and {MAX_MIN_EMAIL_THREAD_HOURS}"
+                ),
+            )
+        prefs_store.set_pref(PREF_MIN_EMAIL_THREAD_HOURS, f"{h:.6g}")
+    if update.exclude_passive_teams_threads is not None:
+        prefs_store.set_pref(
+            PREF_EXCLUDE_PASSIVE_TEAMS,
+            "true" if update.exclude_passive_teams_threads else "false",
+        )
     return await get_prefs()

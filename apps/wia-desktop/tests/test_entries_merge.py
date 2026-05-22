@@ -47,7 +47,7 @@ def test_merge_inserts_new_entries_when_week_is_empty():
     assert rows[0].label == "A"
 
 
-def test_merge_preserves_rows_not_in_new_scan():
+def test_merge_sweeps_rows_not_in_new_scan():
     # First scan: two entries.
     entries_repo.merge_week(
         WEEK,
@@ -56,11 +56,29 @@ def test_merge_preserves_rows_not_in_new_scan():
             _entry("Standup", category="Internal", block_ids=[2], hours=1.0),
         ],
     )
-    # Second scan returns only one of them (Copilot was flaky).
+    # Second scan: the customer meeting is no longer reported (renamed,
+    # filtered, or just dropped by Work IQ). The orphan must be swept
+    # so the week's totals reflect the latest scan rather than drifting
+    # upward forever.
     entries_repo.merge_week(
         WEEK,
         [_entry("Standup", category="Internal", block_ids=[2], hours=1.0)],
     )
+    labels = {r.label for r in _all_rows()}
+    assert labels == {"Standup"}
+
+
+def test_merge_empty_scan_does_not_wipe_existing_rows():
+    entries_repo.merge_week(
+        WEEK,
+        [
+            _entry("Friedfrank – ALZ", category="Customer", block_ids=[1], hours=8.0),
+            _entry("Standup", category="Internal", block_ids=[2], hours=1.0),
+        ],
+    )
+    # A scan that produced no entries (Work IQ outage, all-day OOO, etc.)
+    # must not delete the existing week's data.
+    entries_repo.merge_week(WEEK, [])
     labels = {r.label for r in _all_rows()}
     assert labels == {"Friedfrank – ALZ", "Standup"}
 
@@ -102,12 +120,15 @@ def test_merge_inserts_new_entry_when_no_match():
         WEEK,
         [_entry("Standup", category="Internal", block_ids=[2])],
     )
+    # New scan contains a different event and no longer reports the
+    # previous one — the orphan sweep drops the prior row so the week
+    # reflects the latest scan.
     entries_repo.merge_week(
         WEEK,
         [_entry("Contoso- Azure Landing Zone vWAN", category="Customer", block_ids=[99])],
     )
     labels = {r.label for r in _all_rows()}
-    assert labels == {"Standup", "Contoso- Azure Landing Zone vWAN"}
+    assert labels == {"Contoso- Azure Landing Zone vWAN"}
 
 
 def test_merge_preserves_user_edited_row():
@@ -200,7 +221,14 @@ def test_merge_does_not_regress_real_category_to_other():
 def test_merge_does_not_regress_real_category_to_admin():
     entries_repo.merge_week(
         WEEK,
-        [_entry("Customer – ContosoAzure Landing Zone", category="Customer", block_ids=[200], hours=2.0)],
+        [
+            _entry(
+                "Customer – ContosoAzure Landing Zone",
+                category="Customer",
+                block_ids=[200],
+                hours=2.0,
+            )
+        ],
     )
     # Subsequent scan with stripped metadata bucketed under Admin gap-fill.
     entries_repo.merge_week(
@@ -270,6 +298,127 @@ def test_merge_preserves_manual_row():
     assert ("Customer call", "Customer") in rows
     assert rows[("Customer call", "Customer")].manual is True
     assert rows[("Standup", "Internal")] is not None
+
+
+def test_merge_sweeps_stale_synthetic_admin_rows_not_re_emitted():
+    """Gap-fill rows (``Admin`` + no block ids) from a prior scan must be
+    removed if the current scan doesn't re-emit them. Otherwise stale
+    ``Focus time`` / ``Admin / Follow-up`` totals keep contributing to
+    daily hours after real meetings or filters change the gap layout."""
+    # First scan: real meeting plus two synthetic gap-fills.
+    entries_repo.merge_week(
+        WEEK,
+        [
+            _entry("Standup", category="Internal", block_ids=[1], hours=1.0),
+            _entry("Admin / Follow-up", category="Admin", block_ids=[], hours=2.0),
+            _entry("Focus time", category="Admin", block_ids=[], hours=3.0),
+        ],
+    )
+    assert {r.label for r in _all_rows()} == {
+        "Standup",
+        "Admin / Follow-up",
+        "Focus time",
+    }
+    # Second scan: the gaps are filled by real meetings, so the
+    # orchestrator no longer emits any synthetic Admin rows.
+    entries_repo.merge_week(
+        WEEK,
+        [
+            _entry("Standup", category="Internal", block_ids=[1], hours=1.0),
+            _entry("Customer – Foo", category="Customer", block_ids=[2], hours=5.0),
+        ],
+    )
+    rows = {(r.label, r.category): r for r in _all_rows()}
+    assert ("Admin / Follow-up", "Admin") not in rows
+    assert ("Focus time", "Admin") not in rows
+    assert ("Standup", "Internal") in rows
+    assert ("Customer – Foo", "Customer") in rows
+
+
+def test_merge_keeps_synthetic_admin_row_when_re_emitted():
+    """A synthetic row that the current scan still emits stays put
+    (updated in place with the new hours)."""
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Focus time", category="Admin", block_ids=[], hours=3.0)],
+    )
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Focus time", category="Admin", block_ids=[], hours=1.5)],
+    )
+    rows = _all_rows()
+    assert len(rows) == 1
+    assert rows[0].label == "Focus time"
+    assert rows[0].duration_hours == 1.5
+
+
+def test_merge_sweeps_admin_row_with_block_ids_when_not_re_emitted():
+    """The sweep is not Admin-specific any more: a real event bucketed
+    under ``Admin`` that the current scan doesn't re-emit is treated
+    like any other orphan and removed."""
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Admin – Expense report", category="Admin", block_ids=[55], hours=1.0)],
+    )
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Standup", category="Internal", block_ids=[1], hours=1.0)],
+    )
+    labels = {r.label for r in _all_rows()}
+    assert labels == {"Standup"}
+
+
+def test_merge_sweeps_orphan_internal_row_not_re_emitted():
+    """The orphan-row problem reported by users in the wild: a
+    previously-scanned ``Internal`` meeting whose normalised title
+    drifted slightly across scans was duplicated indefinitely. The
+    broader sweep removes the prior copy when the new scan emits the
+    new title."""
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Internal – Fabric Workshop", category="Internal", block_ids=[], hours=1.0)],
+    )
+    entries_repo.merge_week(
+        WEEK,
+        [
+            _entry(
+                "Internal – Fabric Workshop | 18 MAY",
+                category="Internal",
+                block_ids=[],
+                hours=1.0,
+            )
+        ],
+    )
+    labels = {r.label for r in _all_rows()}
+    assert labels == {"Internal – Fabric Workshop | 18 MAY"}
+
+
+def test_merge_does_not_sweep_user_edited_admin_row_without_block_ids():
+    """A user-added manual ``Admin`` row with no block ids must survive
+    the sweep — it's owned by the user, not derived from gap-fill."""
+    with get_session() as s:
+        s.add(
+            TimeEntryRow(
+                label="Admin / Follow-up",
+                category="Admin",
+                duration_hours=2.0,
+                confidence="high",
+                impact="low",
+                week_of=WEEK,
+                source_block_ids="",
+                daily_hours="{}",
+                user_edited=False,
+                manual=True,
+            )
+        )
+        s.commit()
+    entries_repo.merge_week(
+        WEEK,
+        [_entry("Standup", category="Internal", block_ids=[1], hours=1.0)],
+    )
+    rows = {(r.label, r.category): r for r in _all_rows()}
+    assert ("Admin / Follow-up", "Admin") in rows
+    assert rows[("Admin / Follow-up", "Admin")].manual is True
 
 
 def test_replace_week_preserves_manual_row():

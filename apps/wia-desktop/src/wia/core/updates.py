@@ -91,7 +91,10 @@ async def _fetch_update_info() -> UpdateInfo:
         async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
             resp = await client.get(
                 _RELEASES_URL,
-                headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
                 follow_redirects=True,
             )
             resp.raise_for_status()

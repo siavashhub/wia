@@ -77,7 +77,10 @@ def test_umbrella_customer_extracts_specific_code_from_title():
     label, cat = categorize(block, umbrella_categories=["Customer"])
     assert cat == "Contoso"
     # Label should not double-up the category name.
-    assert label == "Contoso\u2013 Contoso- Azure Landing Zone vWAN" or label == "Contoso- Azure Landing Zone vWAN"
+    assert (
+        label == "Contoso\u2013 Contoso- Azure Landing Zone vWAN"
+        or label == "Contoso- Azure Landing Zone vWAN"
+    )
 
 
 def test_umbrella_customer_extracts_td_from_title():

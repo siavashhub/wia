@@ -54,6 +54,7 @@ function wia() {
     newHighImpactCategory: '',
     newUmbrellaCategory: '',
     newPreserveCategory: '',
+    newInternalDomain: '',
     organizationDraft: '',
     // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
     // via x-html so the icon inherits currentColor like Tailwind text.
@@ -495,6 +496,103 @@ function wia() {
         if (!r.ok) throw new Error(await r.text());
         this.prefs = await r.json();
       } catch (e) { this.error = `Save private-meetings toggle failed: ${e}`; }
+    },
+
+    // --- Noise-reduction prefs (hotfix/0.3.1) ------------------------------
+
+    async _saveBoolPref(key, on, label) {
+      // Optimistically update the local prefs so the switch reads back the
+      // new value instantly; revert via the server response.
+      this.prefs[key] = !!on;
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: !!on }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save ${label} failed: ${e}`; }
+    },
+
+    async toggleExcludeDeclined(on) {
+      await this._saveBoolPref('exclude_declined_meetings', on, 'declined-meetings toggle');
+    },
+
+    async toggleExcludeNoResponse(on) {
+      await this._saveBoolPref(
+        'exclude_no_response_meetings', on, 'no-response-meetings toggle');
+    },
+
+    async toggleExcludeOptionalLarge(on) {
+      await this._saveBoolPref(
+        'exclude_optional_large_meetings', on, 'optional-large-meetings toggle');
+    },
+
+    async saveOptionalLargeThreshold(value) {
+      const n = parseInt(value, 10);
+      if (!Number.isFinite(n) || n < 2 || n > 10000) {
+        this.error = 'Min attendees must be between 2 and 10000.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ optional_large_meeting_min_attendees: n }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save optional-large threshold failed: ${e}`; }
+    },
+
+    async saveMinEmailThreadHours(value) {
+      const f = parseFloat(value);
+      if (!Number.isFinite(f) || f < 0 || f > 24) {
+        this.error = 'Min email thread hours must be between 0 and 24.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ min_email_thread_hours: f }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save min-email-thread-hours failed: ${e}`; }
+    },
+
+    async _saveInternalDomains(next) {
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ additional_internal_domains: next }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save internal domains failed: ${e}`; }
+    },
+
+    async addInternalDomain() {
+      const raw = (this.newInternalDomain || '').trim().toLowerCase().replace(/^@/, '');
+      if (!raw) return;
+      const existing = (this.prefs.additional_internal_domains || []);
+      if (existing.includes(raw)) {
+        this.newInternalDomain = '';
+        return;
+      }
+      const next = [...existing, raw];
+      this.prefs.additional_internal_domains = next;
+      this.newInternalDomain = '';
+      await this._saveInternalDomains(next);
+    },
+
+    async removeInternalDomain(dom) {
+      const next = (this.prefs.additional_internal_domains || []).filter((d) => d !== dom);
+      this.prefs.additional_internal_domains = next;
+      await this._saveInternalDomains(next);
     },
 
     async loadPrefs() {

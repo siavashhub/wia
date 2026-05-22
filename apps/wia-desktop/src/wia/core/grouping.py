@@ -19,6 +19,12 @@ MERGE_GAP_MINUTES = 5
 WORK_DAY_START = time(9, 0)
 WORK_DAY_END = time(17, 0)
 MIN_GAP_FILL_MINUTES = 15
+# Skip gap-fill entirely for a day whose existing block hours already
+# meet or exceed a standard work day. The user already has more than a
+# work day of recorded activity (typically lots of short Teams / email
+# blocks that don't occupy contiguous wall-clock time) — adding more
+# synthetic ``Admin`` on top would double-count.
+GAP_FILL_DAY_CAP_HOURS = 8.0
 # Cap any single calendar day's contribution from one block. Work IQ can
 # return Teams "ongoing thread" / email "long-running thread" blocks whose
 # start/end span the entire week — at face value those would balloon a
@@ -235,6 +241,13 @@ def fill_gaps(blocks: list[ActivityBlock], days: list[datetime]) -> list[Activit
     All blocks and the gap-fill window are evaluated in the timezone of
     ``days[0]`` so meetings returned with their local offset (e.g.
     ``-04:00``) line up with the user's 9-to-5 work day.
+
+    Days whose existing block hours already meet or exceed
+    :data:`GAP_FILL_DAY_CAP_HOURS` are skipped — the user clearly has a
+    full day of recorded activity (even if it's spread across many
+    short Teams / email blocks that don't occupy contiguous wall-clock
+    time), and synthesising more ``Admin`` on top would just inflate
+    the total.
     """
     out = list(blocks)
     tz = days[0].tzinfo if days else None
@@ -250,6 +263,9 @@ def fill_gaps(blocks: list[ActivityBlock], days: list[datetime]) -> list[Activit
             by_day.get(day_key, []),
             key=lambda b: b.start.astimezone(tz) if tz else b.start,
         )
+        # Skip if the day is already saturated with recorded activity.
+        if sum(b.duration_hours for b in day_blocks) >= GAP_FILL_DAY_CAP_HOURS:
+            continue
         cursor = datetime.combine(day.date(), WORK_DAY_START, tzinfo=day.tzinfo)
         end_of_day = datetime.combine(day.date(), WORK_DAY_END, tzinfo=day.tzinfo)
 

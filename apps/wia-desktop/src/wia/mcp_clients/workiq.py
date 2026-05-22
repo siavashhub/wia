@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -324,12 +325,20 @@ class WorkIQClient:
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
             '"organizer":"email","participants":["email"],"isOnline":true,'
             '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
-            '"isPrivate":true}]}. '
+            '"isPrivate":true,'
+            '"responseStatus":"accepted|tentative|declined|notResponded|organizer",'
+            '"isOptional":false,"attendeeCount":0}]}. '
             "Always include the event's Outlook categories array (use [] if none). "
             "Always include the sensitivity field \u2014 it is one of normal, personal, "
             "private, or confidential. If the event is marked Private in Outlook, "
             "set sensitivity to 'private' AND set isPrivate to true. Do not omit "
             "sensitivity even if the value is 'normal'. "
+            "ALWAYS include responseStatus for each event \u2014 my own response to the "
+            "invitation, one of: 'accepted', 'tentative', 'declined', 'notResponded', "
+            "or 'organizer' when I am the organizer. ALWAYS include isOptional (true "
+            "if I was invited as an Optional attendee, false otherwise) and "
+            "attendeeCount (the total number of invitees including required and "
+            "optional, including me; use 0 for appointment-style events with no invitees). "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are no events, return {"events":[]}.'
         )
@@ -350,8 +359,13 @@ class WorkIQClient:
             '{"events":[{"title":"...","start":"ISO8601","end":"ISO8601",'
             '"organizer":"email","participants":["email"],"isOnline":false,'
             '"categories":["<outlook category name>"],"sensitivity":"normal|personal|private|confidential",'
-            '"isPrivate":true}]}. '
+            '"isPrivate":true,'
+            '"responseStatus":"accepted|tentative|declined|notResponded|organizer",'
+            '"isOptional":false,"attendeeCount":0}]}. '
             "Always include the event's Outlook categories array (use [] if none). "
+            "ALWAYS include responseStatus (for self-only appointments use 'organizer'), "
+            "isOptional (false for self-only), and attendeeCount (0 for events with no "
+            "other invitees). "
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there are none, return {"events":[]}.'
         )
@@ -408,9 +422,17 @@ class WorkIQClient:
             f"{end.isoformat()} 23:59 (inclusive). For each thread or call, "
             "estimate the total active minutes I spent (reading + writing + "
             "talking) and pick a representative start/end timestamp. "
+            "Also return whether I actively contributed: set "
+            '"iParticipated" to true if I sent at least one message, '
+            "posted a reaction, or joined the call audio/video; false "
+            "when I only viewed / scrolled the thread. Include "
+            '"messagesFromMe" (integer count of messages I sent in this '
+            'thread during the window) and "messagesTotal" (integer total '
+            "messages in the thread during the window) whenever you can. "
             "Return ONLY a JSON object, no prose, no markdown fences, in this exact shape: "
             '{"events":[{"title":"<short topic>","start":"ISO8601","end":"ISO8601",'
-            '"participants":["email"]}]}. '
+            '"participants":["email"],"iParticipated":true,"messagesFromMe":0,'
+            '"messagesTotal":0}]}. '
             "Use ISO 8601 timestamps with timezone offsets. "
             'If there is no Teams activity, return {"events":[]}.'
         )
@@ -741,6 +763,75 @@ def _coerce_events(value: Any) -> list[dict[str, Any]] | None:
     return None
 
 
+# --- Title normalisation ---------------------------------------------------
+#
+# Work IQ frequently rewrites the title of recurring Teams chats and email
+# threads with a per-day parenthetical summary (e.g. ``O.U.C.H. group chat
+# (Clawpilot discussion)`` on Mon, ``O.U.C.H. group chat (dashboard +
+# permissions)`` on Tue), so the same conversation lands under four
+# different ``(label, category)`` aggregator keys across a week. The
+# aggregator already builds a per-day ``daily_hours`` dict, so we just need
+# the per-day titles to collapse to a stable stem. Calendar workshops show
+# a similar pattern with date/option suffixes (``... Workshop VBD| 18 May
+# 8am - Wkshop 3``).
+#
+# Both helpers preserve the *original* title via ``metadata["original_title"]``
+# so downstream consumers (e.g. the Briefing UI's "evidence" tooltip) can
+# still see what Work IQ actually returned.
+
+_CHAT_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_CALENDAR_PIPE_SUFFIX_RE = re.compile(r"\s*\|\s*[^|]*\d[^|]*$")
+_CALENDAR_EMPTY_PIPE_RE = re.compile(r"\s*\|\s*$")
+_CALENDAR_WKSHOP_SUFFIX_RE = re.compile(
+    r"\s*-\s*(?:option|wkshop|workshop|session)\s+\d+\s*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_chat_title(title: str) -> str:
+    """Strip a trailing parenthetical from a Teams / Email block title.
+
+    Collapses e.g. ``"O.U.C.H. group chat (Clawpilot discussion)"`` to
+    ``"O.U.C.H. group chat"`` so per-day Work IQ summaries of the same
+    conversation aggregate into a single :class:`TimeEntry` row. We
+    deliberately only strip ONE trailing group — nested or mid-string
+    parens are left alone (e.g. ``"Chat with Abe (sub) about X"`` keeps
+    its inner ``(sub)``).
+    """
+    if not title:
+        return title
+    stripped = _CHAT_TRAILING_PAREN_RE.sub("", title).rstrip()
+    return stripped or title
+
+
+def _normalize_calendar_title(title: str) -> str:
+    """Strip recurring-event suffixes from a Calendar block title.
+
+    Targets two patterns observed in real Work IQ output that cause
+    the same workshop / training event to spawn one row per occurrence:
+
+    - ``"... Workshop VBD| 18 May 8am - Wkshop 3"`` — date/time pipe
+      segment containing a digit.
+    - ``"... Workshop - option 2"`` / ``"... - session 1"``.
+
+    Pipe-stripping is iterative so multi-segment titles like
+    ``"A | 18 MAY 2026 | 8am - 9am | - option 1"`` collapse fully to
+    ``"A"``. Returns the original title unchanged when nothing matched.
+    """
+    if not title:
+        return title
+    out = title
+    for _ in range(8):  # bounded; protects against pathological input
+        new = _CALENDAR_WKSHOP_SUFFIX_RE.sub("", out)
+        new = _CALENDAR_PIPE_SUFFIX_RE.sub("", new)
+        new = _CALENDAR_EMPTY_PIPE_RE.sub("", new)
+        new = new.rstrip()
+        if new == out or not new:
+            break
+        out = new
+    return out or title
+
+
 def _event_to_block(
     ev: dict[str, Any],
     *,
@@ -749,11 +840,27 @@ def _event_to_block(
 ) -> ActivityBlock:
     start = _parse_dt(ev.get("start") or ev.get("startTime"))
     end = _parse_dt(ev.get("end") or ev.get("endTime"))
-    title = ev.get("subject") or ev.get("title")
+    raw_title = ev.get("subject") or ev.get("title")
+    # Source-aware title normalisation: collapse per-day chat summaries
+    # and recurring-workshop date suffixes so the aggregator can merge
+    # what is conceptually the same conversation / event.
+    if isinstance(raw_title, str) and raw_title.strip():
+        if source in (Source.TEAMS, Source.EMAIL):
+            title = _normalize_chat_title(raw_title)
+        elif source is Source.CALENDAR:
+            title = _normalize_calendar_title(raw_title)
+        else:
+            title = raw_title
+    else:
+        title = raw_title
     attendees = ev.get("attendees") or ev.get("participants") or []
     if attendees and isinstance(attendees[0], dict):
         attendees = [a.get("email") or a.get("address") or "" for a in attendees]
     metadata: dict[str, str] = {"id": str(ev.get("id", ""))}
+    # Preserve the un-normalised title so the UI can still display what
+    # Work IQ actually said, and so a future debugger can see the input.
+    if isinstance(raw_title, str) and isinstance(title, str) and raw_title != title:
+        metadata["original_title"] = raw_title
     # Outlook categories — stored as a ``|``-joined lowercase string so the
     # orchestrator can do a cheap substring/membership check without re-
     # parsing JSON. Empty when the event has no categories.
@@ -774,6 +881,55 @@ def _event_to_block(
         metadata["sensitivity"] = sensitivity.strip().lower()
     if is_private_flag:
         metadata["is_private"] = "true"
+    # Calendar-only attendance metadata. Drives the orchestrator's ingest-
+    # time filters for "meetings I didn't attend" (declined / no-response /
+    # optional + large). Stored only when present — missing keys signal
+    # "unknown" to the filter so it can apply its configured default.
+    response_raw = ev.get("responseStatus") or ev.get("response_status")
+    if isinstance(response_raw, str) and response_raw.strip():
+        # Normalise camelCase / spacing into a small fixed vocabulary.
+        normalised = response_raw.strip().lower().replace(" ", "").replace("_", "")
+        alias = {
+            "tentativelyaccepted": "tentative",
+            "none": "notresponded",
+            "noresponse": "notresponded",
+            "awaitingresponse": "notresponded",
+            "organiser": "organizer",
+        }
+        metadata["response_status"] = alias.get(normalised, normalised)
+    is_optional = ev.get("isOptional")
+    if is_optional is None:
+        is_optional = ev.get("is_optional")
+    if is_optional is True:
+        metadata["is_optional"] = "true"
+    elif is_optional is False:
+        metadata["is_optional"] = "false"
+    attendee_count = ev.get("attendeeCount")
+    if attendee_count is None:
+        attendee_count = ev.get("attendee_count")
+    if isinstance(attendee_count, int) and attendee_count >= 0:
+        metadata["attendee_count"] = str(attendee_count)
+    # Teams-only participation metadata. Drives the orchestrator's
+    # "drop passive Teams threads" filter — a channel-style thread the
+    # user only scrolled past should not eat into their week. Missing
+    # keys signal "unknown" to the filter so it keeps the block.
+    i_participated = ev.get("iParticipated")
+    if i_participated is None:
+        i_participated = ev.get("i_participated")
+    if i_participated is True:
+        metadata["i_participated"] = "true"
+    elif i_participated is False:
+        metadata["i_participated"] = "false"
+    messages_from_me = ev.get("messagesFromMe")
+    if messages_from_me is None:
+        messages_from_me = ev.get("messages_from_me")
+    if isinstance(messages_from_me, int) and messages_from_me >= 0:
+        metadata["messages_from_me"] = str(messages_from_me)
+    messages_total = ev.get("messagesTotal")
+    if messages_total is None:
+        messages_total = ev.get("messages_total")
+    if isinstance(messages_total, int) and messages_total >= 0:
+        metadata["messages_total"] = str(messages_total)
     return ActivityBlock(
         start=start,
         end=end,

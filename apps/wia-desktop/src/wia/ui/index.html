@@ -1821,6 +1821,92 @@
                 <span x-text="prefs.exclude_private_meetings ? 'Excluded' : 'Included'"></span>
               </button>
             </div>
+
+            <!-- Attendance noise -->
+            <div class="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+              <p class="mb-2 text-[11px] text-slate-500 dark:text-slate-400">
+                Drop calendar meetings you didn't really attend. Organizer-owned events are always kept.
+              </p>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Skip calendar meetings you declined.">
+                  <span>Declined meetings</span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="!!prefs.exclude_declined_meetings"
+                  @click="toggleExcludeDeclined(!prefs.exclude_declined_meetings)"
+                  :class="prefs.exclude_declined_meetings
+                    ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
+                  class="inline-flex items-center gap-1 rounded-md px-3 py-0.5 text-xs font-medium transition-colors"
+                >
+                  <span x-text="prefs.exclude_declined_meetings ? 'Excluded' : 'Included'"></span>
+                </button>
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Skip calendar meetings you never responded to.">
+                  <span>No-response meetings</span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="!!prefs.exclude_no_response_meetings"
+                  @click="toggleExcludeNoResponse(!prefs.exclude_no_response_meetings)"
+                  :class="prefs.exclude_no_response_meetings
+                    ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
+                  class="inline-flex items-center gap-1 rounded-md px-3 py-0.5 text-xs font-medium transition-colors"
+                >
+                  <span x-text="prefs.exclude_no_response_meetings ? 'Excluded' : 'Included'"></span>
+                </button>
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Skip meetings where you were invited as Optional and the total invitee count meets the threshold below.">
+                  <span>Optional in large meetings</span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="!!prefs.exclude_optional_large_meetings"
+                  @click="toggleExcludeOptionalLarge(!prefs.exclude_optional_large_meetings)"
+                  :class="prefs.exclude_optional_large_meetings
+                    ? 'bg-indigo-600 text-white ring-1 ring-indigo-700'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'"
+                  class="inline-flex items-center gap-1 rounded-md px-3 py-0.5 text-xs font-medium transition-colors"
+                >
+                  <span x-text="prefs.exclude_optional_large_meetings ? 'Excluded' : 'Included'"></span>
+                </button>
+                <label class="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>min attendees</span>
+                  <input
+                    type="number"
+                    min="2"
+                    max="10000"
+                    step="1"
+                    :value="prefs.optional_large_meeting_min_attendees"
+                    @change="saveOptionalLargeThreshold($event.target.value)"
+                    class="w-20 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Optional large meeting attendee threshold"
+                  />
+                </label>
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Email threads shorter than this (in hours) are treated as noise and dropped. Set to 0 to disable.">
+                  <span>Min email thread (h)</span>
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  max="24"
+                  step="0.05"
+                  :value="prefs.min_email_thread_hours"
+                  @change="saveMinEmailThreadHours($event.target.value)"
+                  class="w-24 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  aria-label="Minimum email thread hours"
+                />
+              </div>
+            </div>
           </div>
 
           <!-- Impact tab -->
@@ -2005,6 +2091,41 @@
             <template x-if="!prefs.organization_label">
               <p class="pl-[7.5rem] text-[11px] text-slate-400 dark:text-slate-500">Will be auto-detected after the next scan.</p>
             </template>
+
+            <!-- Additional internal domains -->
+            <div class="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+              <p class="mb-2 text-[11px] text-slate-500 dark:text-slate-400">
+                Extra email domains to treat as part of your own organization. Participants on these domains won't make a meeting count as a client meeting (use this for sister-company domains).
+              </p>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex w-28 shrink-0 items-center gap-1 text-slate-500 dark:text-slate-400" title="Lowercased DNS names. Hit Enter to add.">
+                  <span>Internal domains</span>
+                </span>
+                <div class="flex min-h-[1.5rem] flex-1 flex-wrap items-center gap-1">
+                  <template x-for="dom in (prefs.additional_internal_domains || [])" :key="'pdom-' + dom">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                      <span x-text="dom"></span>
+                      <button
+                        type="button"
+                        class="text-slate-500 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400"
+                        @click="removeInternalDomain(dom)"
+                        :aria-label="'Remove ' + dom"
+                        title="Remove"
+                      >&times;</button>
+                    </span>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="newInternalDomain"
+                    @keydown.enter.prevent="addInternalDomain()"
+                    placeholder="e.g. github.com"
+                    maxlength="253"
+                    class="w-44 rounded border bg-white px-2 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    aria-label="Add internal domain"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
           </section>
         </div>

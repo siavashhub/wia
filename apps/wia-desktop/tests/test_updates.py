@@ -47,7 +47,9 @@ def _clear_cache():
     updates_mod._cache = None
 
 
-def _mock_response(tag: str = "v99.0.0", html_url: str = "https://github.com/siavashhub/wia/releases/tag/v99.0.0") -> MagicMock:
+def _mock_response(
+    tag: str = "v99.0.0", html_url: str = "https://github.com/siavashhub/wia/releases/tag/v99.0.0"
+) -> MagicMock:
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.return_value = {"tag_name": tag, "html_url": html_url}
@@ -61,8 +63,10 @@ async def test_update_available_when_remote_is_newer():
     async def _fake_get(*args, **kwargs):
         return fake_resp
 
-    with patch("wia.core.updates.__version__", "0.1.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "0.1.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=fake_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -80,8 +84,10 @@ async def test_update_available_when_remote_is_newer():
 async def test_no_update_when_versions_equal():
     fake_resp = _mock_response(tag="v0.1.0")
 
-    with patch("wia.core.updates.__version__", "0.1.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "0.1.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=fake_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -97,8 +103,10 @@ async def test_no_update_when_versions_equal():
 async def test_no_update_when_local_is_newer():
     fake_resp = _mock_response(tag="v0.1.0")
 
-    with patch("wia.core.updates.__version__", "1.0.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "1.0.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=fake_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -112,8 +120,10 @@ async def test_no_update_when_local_is_newer():
 
 @pytest.mark.asyncio
 async def test_network_error_returns_graceful_result():
-    with patch("wia.core.updates.__version__", "0.1.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "0.1.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=Exception("network down"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -131,8 +141,10 @@ async def test_network_error_returns_graceful_result():
 async def test_cache_is_used_on_second_call():
     fake_resp = _mock_response(tag="v99.0.0")
 
-    with patch("wia.core.updates.__version__", "0.1.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "0.1.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=fake_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -150,8 +162,10 @@ async def test_cache_is_used_on_second_call():
 async def test_force_bypasses_cache():
     fake_resp = _mock_response(tag="v99.0.0")
 
-    with patch("wia.core.updates.__version__", "0.1.0"), \
-         patch("httpx.AsyncClient") as mock_client_cls:
+    with (
+        patch("wia.core.updates.__version__", "0.1.0"),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=fake_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -185,7 +199,10 @@ async def test_api_endpoint_returns_update_info():
         release_url="https://github.com/siavashhub/wia/releases/tag/v99.0.0",
     )
 
-    with patch("wia.api.updates.check_for_updates", new=AsyncMock(return_value=cached)), TestClient(app) as client:
+    with (
+        patch("wia.api.updates.check_for_updates", new=AsyncMock(return_value=cached)),
+        TestClient(app) as client,
+    ):
         r = client.get("/api/updates/check")
 
     assert r.status_code == 200
