@@ -49,6 +49,7 @@
 | `wia.api.review` | Weekly review summary endpoint |
 | `wia.api.schedule` | Scheduler config + run-now + scan history |
 | `wia.api.export` | CSV / Markdown / HTML / clipboard exports |
+| `wia.api.updates` | Auto-update check against GitHub Releases |
 | `wia.api.actions` | WIA Actions CRUD + `/draft` artifact endpoint |
 | `wia.core.types` | Pydantic domain models (`ActivityBlock`, `TimeEntry`, `Briefing`, `Action`, `Confidence`, `Source`) |
 | `wia.core.week` | Mon–Sun week math and weekday iteration |
@@ -59,7 +60,7 @@
 | `wia.core.review` | Weekly review aggregation |
 | `wia.core.actions` | Suggester registry (`follow_up`, `decision_note`) + draft generators (`drafts/email.py`, `drafts/note.py`) |
 | `wia.mcp_clients.workiq` | Work IQ MCP stdio client + CLI probe/enable |
-| `wia.mcp_server.server` | WIA's exposed MCP server (`wia-mcp`) — briefing, entries, actions, export |
+| `wia.mcp_server.server` | WIA's exposed MCP server (`wia-mcp`) — tools: `get_weekly_briefing`, `list_time_entries`, `export_entries_csv`, `list_actions`, `update_action` |
 | `wia.storage` | SQLite persistence (`entries`, `actions`, `prefs`, `scan_history`) |
 
 ## Authentication

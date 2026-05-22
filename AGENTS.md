@@ -47,6 +47,20 @@ Linux/macOS-only assumptions in runtime code.
   source of truth — `release.yml` stamps `version.json` and passes the version
   to Inno Setup. Do not bump `version.json` or `installer/wia.iss` manually.
 
+## Docs are code
+
+`apps/wia-desktop/tests/test_docs_drift.py` fails CI when docs fall behind
+code. Update docs in the same PR as the code:
+
+- New module / router → `docs/ARCHITECTURE.md` module map.
+- New MCP tool in `wia.mcp_server.server` → `docs/ARCHITECTURE.md` **and**
+  the module docstring at the top of `server.py`.
+- New top-level feature → move the matching bullet in `docs/ROADMAP.md`
+  from Planned to Shipped.
+- Shipping a tag `vX.Y.Z` → create `docs/releases/vX.Y.Z.md` *before*
+  pushing the tag; `release.yml` refuses to publish without it.
+- Don't break intra-repo Markdown links — the drift test checks them.
+
 ## What not to do
 
 - Don't add a server-side component, telemetry endpoint, or remote DB.
