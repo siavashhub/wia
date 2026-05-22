@@ -15,8 +15,15 @@ import uvicorn
 
 from wia.app import create_app
 from wia.config import get_settings
+from wia.single_instance import acquire as _acquire_single_instance
+from wia.single_instance import focus_existing_window as _focus_existing_window
 
 log = logging.getLogger(__name__)
+
+# Holds the single-instance mutex handle for the lifetime of the process.
+# If this is garbage-collected the handle closes and the mutex is released,
+# so we deliberately keep it as a module-level reference.
+_instance_lock = None  # type: ignore[var-annotated]
 
 
 def _ensure_std_streams() -> None:
@@ -143,6 +150,17 @@ def run() -> None:
         sys.exit(_selfcheck())
 
     settings = get_settings()
+
+    # Single-instance gate: only one WIA process may own the SQLite DB
+    # and the Work IQ MCP child at a time. A duplicate launch should feel
+    # like a focus, not a silent no-op, so try to surface the existing
+    # window before exiting.
+    global _instance_lock
+    _instance_lock = _acquire_single_instance()
+    if not _instance_lock.acquired:
+        _focus_existing_window(settings.window_title)
+        sys.exit(0)
+
     from wia.logging_setup import configure_logging
 
     configure_logging(settings)
