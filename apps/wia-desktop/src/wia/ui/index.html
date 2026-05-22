@@ -157,6 +157,40 @@
       </div>
     </header>
 
+    <!-- Update available banner: shown passively below the header so the
+         user can notice and dismiss it without blocking their workflow. -->
+    <div
+      x-show="updateInfo.update_available"
+      x-cloak
+      class="flex items-center justify-between gap-3 border-b border-indigo-200 bg-indigo-50 px-6 py-2 text-sm text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-200"
+      role="status"
+    >
+      <span class="flex items-center gap-2">
+        <span x-html="icon('arrow-up-circle', 'h-4 w-4 shrink-0')"></span>
+        <span>WIA <strong x-text="'v' + (updateInfo.latest_version || '')"></strong> is available</span>
+        <span class="text-indigo-500 dark:text-indigo-400">(you have <span x-text="appVersion"></span>)</span>
+      </span>
+      <span class="flex items-center gap-3">
+        <a
+          :href="updateInfo.release_url || 'https://github.com/siavashhub/wia/releases/latest'"
+          target="_blank"
+          rel="noopener"
+          class="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+        >
+          <span x-html="icon('arrow-down-tray', 'h-3.5 w-3.5')"></span>
+          Download
+        </a>
+        <button
+          type="button"
+          @click="updateInfo.update_available = false"
+          class="rounded p-0.5 opacity-60 hover:opacity-100"
+          aria-label="Dismiss update notification"
+        >
+          <span x-html="icon('x-mark', 'h-4 w-4')"></span>
+        </button>
+      </span>
+    </div>
+
     <main class="px-6 py-6 space-y-6">
       <!-- Briefing view ------------------------------------------------- -->
       <div x-show="view === 'briefing'" class="space-y-6">

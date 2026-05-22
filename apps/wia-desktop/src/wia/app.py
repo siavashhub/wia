@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from wia.api import briefing, entries, export, health, prefs, review, schedule, workiq
+from wia.api import briefing, entries, export, health, prefs, review, schedule, updates, workiq
 from wia.config import get_settings
 from wia.core.scheduler import get_scheduler
 from wia.logging_setup import configure_logging
@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(schedule.router, prefix="/api/schedule", tags=["schedule"])
     app.include_router(prefs.router, prefix="/api/prefs", tags=["prefs"])
     app.include_router(review.router, prefix="/api/review", tags=["review"])
+    app.include_router(updates.router, prefix="/api/updates", tags=["updates"])
 
     if UI_DIR.exists():
         app.mount("/static", StaticFiles(directory=UI_DIR), name="static")

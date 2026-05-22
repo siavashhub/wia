@@ -84,6 +84,7 @@ function wia() {
     prefsOpen: false,
     prefsTab: 'exclude', // 'exclude' | 'impact' | 'org'
     appVersion: '',
+    updateInfo: { update_available: false, latest_version: null, release_url: null },
     expanded: {}, // { [category]: boolean }
     notesOpen: {}, // { [entry.id]: boolean } — which entries have their notes row open
     // How the entries table groups are ordered. Defaults to a stable
@@ -139,6 +140,7 @@ function wia() {
         this.loadSchedule(),
         this.loadStatus(),
         this.loadBriefing(false),
+        this.loadUpdateInfo(),
       ]);
       setInterval(() => this.loadSchedule(), 30000);
     },
@@ -185,6 +187,16 @@ function wia() {
         const data = await r.json();
         this.appVersion = `v${data.version || '?'}`;
       } catch (e) { /* non-fatal */ }
+    },
+
+    async loadUpdateInfo() {
+      try {
+        const r = await fetch('/api/updates/check');
+        if (r.ok) {
+          const data = await r.json();
+          this.updateInfo = data;
+        }
+      } catch (e) { /* non-fatal — no network access is fine */ }
     },
 
     // ---- Theme -----------------------------------------------------------
