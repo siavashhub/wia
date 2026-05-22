@@ -146,6 +146,102 @@ def _is_private_meeting(block: ActivityBlock) -> bool:
     return title.startswith(private_prefixes)
 
 
+# --- Noise-reduction ingest filters (hotfix/0.3.1) -----------------------------
+#
+# These drop calendar blocks the user almost certainly did not attend
+# (declined, no-response, optional invitee on a giant invite list) and
+# email blocks that are so short they're noise. Every drop is logged at
+# WARNING when blocks are missing the required metadata so the user can
+# tell when Work IQ has stopped returning a field (the prompts request
+# it, but Copilot is not always cooperative).
+#
+# Organizer protection: a block whose ``response_status`` resolves to
+# ``"organizer"`` is *never* dropped by an attendance filter — the user
+# called the meeting, even if they later changed their mind.
+
+
+_DECLINED_STATUSES: frozenset[str] = frozenset({"declined"})
+_NO_RESPONSE_STATUSES: frozenset[str] = frozenset({"notresponded", "noresponse"})
+_ORGANIZER_STATUSES: frozenset[str] = frozenset({"organizer"})
+
+
+def _response_status(block: ActivityBlock) -> str | None:
+    raw = block.metadata.get("response_status")
+    if raw is None:
+        return None
+    return raw.strip().lower() or None
+
+
+def _is_organizer(block: ActivityBlock) -> bool:
+    return _response_status(block) in _ORGANIZER_STATUSES
+
+
+def _should_drop_by_response(block: ActivityBlock, drop_declined: bool, drop_no_resp: bool) -> bool:
+    """True when *block* should be filtered out based on the user's RSVP.
+
+    Returns ``False`` for non-calendar blocks and for the organizer
+    (regardless of pref state). Returns ``False`` when no filter is
+    enabled. Missing ``response_status`` metadata is treated as
+    ``"unknown"`` and never causes a drop — we log a WARNING from the
+    caller so the user can see when Work IQ stopped providing the field.
+    """
+    if block.source is not Source.CALENDAR:
+        return False
+    if not (drop_declined or drop_no_resp):
+        return False
+    status = _response_status(block)
+    if status is None or status in _ORGANIZER_STATUSES:
+        return False
+    if drop_declined and status in _DECLINED_STATUSES:
+        return True
+    return bool(drop_no_resp and status in _NO_RESPONSE_STATUSES)
+
+
+def _should_drop_by_optional_attendance(block: ActivityBlock, min_attendees: int) -> bool:
+    """True when the user was an Optional attendee on a sufficiently
+    large invite list. Organizer is always kept. Non-calendar blocks
+    are kept. Missing metadata → kept."""
+    if block.source is not Source.CALENDAR:
+        return False
+    if _is_organizer(block):
+        return False
+    if (block.metadata.get("is_optional") or "").lower() not in {"1", "true", "yes"}:
+        return False
+    raw = block.metadata.get("attendee_count")
+    if not raw:
+        return False
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return False
+    return count >= min_attendees
+
+
+def _should_drop_small_email(block: ActivityBlock, min_hours: float) -> bool:
+    """True when *block* is an email thread shorter than ``min_hours``."""
+    if block.source is not Source.EMAIL:
+        return False
+    if min_hours <= 0:
+        return False
+    return block.duration_hours < min_hours
+
+
+def _should_drop_passive_teams(block: ActivityBlock) -> bool:
+    """True when *block* is a Teams thread the user only read passively.
+
+    Reads ``metadata['i_participated']`` written by
+    :func:`wia.mcp_clients.workiq._event_to_block`. Only drops when the
+    field is explicitly ``"false"`` — missing metadata is treated as
+    "unknown" and the block is kept. Non-Teams blocks are kept.
+    """
+    if block.source is not Source.TEAMS:
+        return False
+    raw = block.metadata.get("i_participated")
+    if raw is None:
+        return False
+    return raw.strip().lower() == "false"
+
+
 _EMAIL_DOMAIN_RE = re.compile(r"@([^>\s]+)")
 
 
@@ -174,7 +270,10 @@ def _derive_organization_from_blocks(blocks: list[ActivityBlock]) -> str | None:
 
 
 def _build_internal_domains(
-    organization_label: str | None, blocks: list[ActivityBlock]
+    organization_label: str | None,
+    blocks: list[ActivityBlock],
+    *,
+    additional_domains: list[str] | None = None,
 ) -> set[str]:
     """Return the set of email domains that should be treated as the user's
     own organisation (and therefore *not* count as a "client" domain).
@@ -191,6 +290,9 @@ def _build_internal_domains(
        blocks. Same heuristic as :func:`_derive_organization_from_blocks`,
        but kept here as a last-resort backstop for when the user hasn't
        signed in yet.
+    4. ``additional_domains``: user-configured sister-company domains
+       (e.g. ``github.com`` for a Microsoft user). These are always
+       unioned in regardless of whether sources 1-3 yielded anything.
     """
     from wia.api.prefs import get_user_identity
 
@@ -211,6 +313,11 @@ def _build_internal_domains(
                     counts[m.group(1).lower()] += 1
         if counts:
             domains.add(max(counts.items(), key=lambda kv: kv[1])[0])
+    if additional_domains:
+        for d in additional_domains:
+            cleaned = (d or "").strip().lower().lstrip("@")
+            if cleaned:
+                domains.add(cleaned)
     return domains
 
 
@@ -269,11 +376,18 @@ async def build_briefing(
     # Excluded keywords: case-insensitive substring match against block
     # title and participants. Drives off the same prefs row the UI edits.
     from wia.api.prefs import (
+        get_additional_internal_domains,
+        get_exclude_declined_meetings,
+        get_exclude_no_response_meetings,
+        get_exclude_optional_large_meetings,
+        get_exclude_passive_teams_threads,
         get_exclude_private_meetings,
         get_excluded_calendar_categories,
         get_excluded_keywords,
         get_high_impact_calendar_categories,
         get_high_impact_keywords,
+        get_min_email_thread_hours,
+        get_optional_large_meeting_min_attendees,
         get_organization_label,
         get_preserve_calendar_categories,
         get_umbrella_calendar_categories,
@@ -355,6 +469,90 @@ async def build_briefing(
         if dropped:
             log.info("Excluded %d/%d private calendar meeting(s)", dropped, before)
 
+    # Attendance-based filters: drop calendar blocks the user demonstrably
+    # didn't attend. We run them as a single pass over ``raw_blocks`` so a
+    # 200-event week stays O(n). Organizer is always kept; blocks missing
+    # the relevant metadata are kept but logged so the user can tell when
+    # Work IQ stopped returning ``responseStatus`` / ``isOptional``.
+    drop_declined = get_exclude_declined_meetings()
+    drop_no_resp = get_exclude_no_response_meetings()
+    drop_opt_large = get_exclude_optional_large_meetings()
+    opt_min_attendees = get_optional_large_meeting_min_attendees()
+    min_email_hours = get_min_email_thread_hours()
+    drop_passive_teams = get_exclude_passive_teams_threads()
+    if raw_blocks and (
+        drop_declined or drop_no_resp or drop_opt_large or min_email_hours > 0 or drop_passive_teams
+    ):
+        kept: list[ActivityBlock] = []
+        declined_drops = 0
+        no_resp_drops = 0
+        optional_drops = 0
+        email_drops = 0
+        passive_teams_drops = 0
+        missing_response = 0
+        missing_participation = 0
+        for b in raw_blocks:
+            if _should_drop_by_response(b, drop_declined, drop_no_resp):
+                status = _response_status(b)
+                if status in _DECLINED_STATUSES:
+                    declined_drops += 1
+                else:
+                    no_resp_drops += 1
+                continue
+            if drop_opt_large and _should_drop_by_optional_attendance(b, opt_min_attendees):
+                optional_drops += 1
+                continue
+            if _should_drop_small_email(b, min_email_hours):
+                email_drops += 1
+                continue
+            if drop_passive_teams and _should_drop_passive_teams(b):
+                passive_teams_drops += 1
+                continue
+            if (
+                b.source is Source.CALENDAR
+                and (drop_declined or drop_no_resp)
+                and _response_status(b) is None
+                and not _is_organizer(b)
+            ):
+                missing_response += 1
+            if (
+                drop_passive_teams
+                and b.source is Source.TEAMS
+                and b.metadata.get("i_participated") is None
+            ):
+                missing_participation += 1
+            kept.append(b)
+        if declined_drops:
+            log.info("Excluded %d declined calendar meeting(s)", declined_drops)
+        if no_resp_drops:
+            log.info("Excluded %d no-response calendar meeting(s)", no_resp_drops)
+        if optional_drops:
+            log.info(
+                "Excluded %d optional calendar meeting(s) with \u2265%d attendees",
+                optional_drops,
+                opt_min_attendees,
+            )
+        if email_drops:
+            log.info("Excluded %d email block(s) shorter than %.2fh", email_drops, min_email_hours)
+        if passive_teams_drops:
+            log.info(
+                "Excluded %d passive Teams thread(s) (no message sent / call joined)",
+                passive_teams_drops,
+            )
+        if missing_response:
+            log.warning(
+                "Kept %d calendar block(s) with missing responseStatus metadata "
+                "(attendance filter cannot evaluate them)",
+                missing_response,
+            )
+        if missing_participation:
+            log.warning(
+                "Kept %d Teams block(s) with missing iParticipated metadata "
+                "(passive-thread filter cannot evaluate them)",
+                missing_participation,
+            )
+        raw_blocks = kept
+
     if workiq_failed and not raw_blocks:
         return Briefing(
             week_start=monday.isoformat(),
@@ -407,7 +605,11 @@ async def build_briefing(
     # auto-derived top domain when it differs. Any participant on those
     # domains will be ignored when picking a client name; any *other*
     # external participant (even a single one) wins.
-    internal_domains = _build_internal_domains(organization_label, raw_blocks)
+    internal_domains = _build_internal_domains(
+        organization_label,
+        raw_blocks,
+        additional_domains=get_additional_internal_domains(),
+    )
 
     # 4. Categorize → entries
     entries = aggregate_entries(

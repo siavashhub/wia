@@ -20,9 +20,11 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
     except json.JSONDecodeError:
         daily = {}
     try:
-        impact = Impact(row.impact) if row.impact else Impact.MEDIUM
+        impact = Impact(row.impact) if row.impact else Impact.LOW
     except ValueError:
-        impact = Impact.MEDIUM
+        # Legacy ``medium`` rows (and any other unknown value) collapse to
+        # LOW under the v0.4 binary scale.
+        impact = Impact.LOW
     sources = [s for s in (row.sources or "").split(",") if s]
     if not sources and not row.manual:
         # Backfill rows that pre-date the ``sources`` column with a
@@ -176,13 +178,7 @@ _WEAK_CATEGORIES = frozenset({"Other", "Admin"})
 
 
 def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
-    """Additive scan: update / insert without deleting non-incoming rows.
-
-    The default rescan path. Protects the week's data from Copilot's
-    non-determinism: a scan that returns a partial answer *augments*
-    what's already there rather than wiping out entries from a previous,
-    more complete scan. Use :func:`replace_week` or :func:`delete_week`
-    when the user explicitly asks for a clean rebuild.
+    """Refresh a week with the latest scan, preserving only user edits.
 
     Matching logic for "is this incoming entry already in the DB?":
 
@@ -202,8 +198,26 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
     flaky rescan that lost an event's ``categories_display`` metadata
     from demoting a previously-good Customer row to ``Other``.
 
-    User-edited rows (``user_edited=True``) are never updated or
-    deleted.
+    Orphan sweep: once the incoming entries have all been applied, any
+    leftover non-edited row that the current scan did not match is
+    deleted. This is the only way to get a clean week in builds where
+    activity blocks aren't persisted with stable ids — without it, every
+    rescan that produces a slightly different label, category or
+    cleaned-up title accumulates an orphan row and the week's totals
+    drift upward indefinitely.
+
+    Safety guards:
+
+    - User-edited rows (``user_edited=True``) and manual rows
+      (``manual=True``) are partitioned out at the start and never
+      touched by the sweep.
+    - The sweep is skipped entirely when ``entries`` is empty so a
+      failed scan that produced no signals can't wipe an existing
+      week.
+
+    Use :func:`delete_week` for an unconditional wipe (including manual
+    and user-edited rows) and :func:`replace_week` for a clean rebuild
+    that still keeps manual rows.
     """
     with get_session() as session:
         existing = session.exec(select(TimeEntryRow).where(TimeEntryRow.week_of == week_of)).all()
@@ -249,6 +263,10 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
                 target = by_key.get(key)
 
             if target is not None:
+                # Remember the row's pre-update key so the sweep below
+                # doesn't drop it after we mutate ``target.label`` /
+                # ``target.category`` in place.
+                old_key = (target.label, target.category)
                 # In-place update; the latest scan is truth for hours/impact.
                 # Regression guard: a weak incoming category (Other/Admin)
                 # over a real existing one is almost always Copilot
@@ -274,8 +292,9 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
                 target.daily_hours = json.dumps(entry.daily_hours or {})
                 session.add(target)
                 # Refresh indexes so a later incoming entry doesn't also
-                # match this same row.
-                by_key.pop((target.label, target.category), None)
+                # match this same row, and so the sweep below doesn't
+                # treat the refreshed row as an orphan.
+                by_key.pop(old_key, None)
                 for bid in list(by_block_id):
                     if by_block_id[bid] is target:
                         by_block_id.pop(bid, None)
@@ -283,6 +302,18 @@ def merge_week(week_of: str, entries: list[TimeEntry]) -> None:
                 new_row = _entry_to_row(entry)
                 new_row.id = None
                 session.add(new_row)
+
+        # Orphan sweep. Any non-edited row still in ``by_key`` was not
+        # matched (and therefore not refreshed) by the current scan —
+        # the underlying activity is no longer reported by Work IQ, or
+        # the new scan produced a slightly different ``(label,
+        # category)`` for it and created a fresh row above. Either way,
+        # the stale row no longer represents truth and would otherwise
+        # accumulate forever. Skip the sweep entirely when the scan
+        # returned nothing so a failed signal can't wipe the week.
+        if entries:
+            for stale in by_key.values():
+                session.delete(stale)
         session.commit()
 
 

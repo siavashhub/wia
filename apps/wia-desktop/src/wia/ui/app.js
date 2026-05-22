@@ -54,6 +54,7 @@ function wia() {
     newHighImpactCategory: '',
     newUmbrellaCategory: '',
     newPreserveCategory: '',
+    newInternalDomain: '',
     organizationDraft: '',
     // Heroicons (MIT) — see ui/icons.js. Returns inline SVG markup; consume
     // via x-html so the icon inherits currentColor like Tailwind text.
@@ -97,7 +98,7 @@ function wia() {
     // Inline "Add manual entry" form. Hidden until the user clicks the
     // Add button, lives on a single row beneath the entries table.
     manualFormOpen: false,
-    manualEntry: { label: '', category: '', impact: 'medium', notes: '', daily: ['', '', '', '', '', '', ''] },
+    manualEntry: { label: '', category: '', impact: 'low', notes: '', daily: ['', '', '', '', '', '', ''] },
     manualSaving: false,
     // Column index → label. Backend always treats Monday as week_of, so the
     // ordering here is purely a render-time preference.
@@ -497,6 +498,103 @@ function wia() {
       } catch (e) { this.error = `Save private-meetings toggle failed: ${e}`; }
     },
 
+    // --- Noise-reduction prefs (hotfix/0.3.1) ------------------------------
+
+    async _saveBoolPref(key, on, label) {
+      // Optimistically update the local prefs so the switch reads back the
+      // new value instantly; revert via the server response.
+      this.prefs[key] = !!on;
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: !!on }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save ${label} failed: ${e}`; }
+    },
+
+    async toggleExcludeDeclined(on) {
+      await this._saveBoolPref('exclude_declined_meetings', on, 'declined-meetings toggle');
+    },
+
+    async toggleExcludeNoResponse(on) {
+      await this._saveBoolPref(
+        'exclude_no_response_meetings', on, 'no-response-meetings toggle');
+    },
+
+    async toggleExcludeOptionalLarge(on) {
+      await this._saveBoolPref(
+        'exclude_optional_large_meetings', on, 'optional-large-meetings toggle');
+    },
+
+    async saveOptionalLargeThreshold(value) {
+      const n = parseInt(value, 10);
+      if (!Number.isFinite(n) || n < 2 || n > 10000) {
+        this.error = 'Min attendees must be between 2 and 10000.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ optional_large_meeting_min_attendees: n }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save optional-large threshold failed: ${e}`; }
+    },
+
+    async saveMinEmailThreadHours(value) {
+      const f = parseFloat(value);
+      if (!Number.isFinite(f) || f < 0 || f > 24) {
+        this.error = 'Min email thread hours must be between 0 and 24.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ min_email_thread_hours: f }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save min-email-thread-hours failed: ${e}`; }
+    },
+
+    async _saveInternalDomains(next) {
+      try {
+        const r = await fetch('/api/prefs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ additional_internal_domains: next }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.prefs = await r.json();
+      } catch (e) { this.error = `Save internal domains failed: ${e}`; }
+    },
+
+    async addInternalDomain() {
+      const raw = (this.newInternalDomain || '').trim().toLowerCase().replace(/^@/, '');
+      if (!raw) return;
+      const existing = (this.prefs.additional_internal_domains || []);
+      if (existing.includes(raw)) {
+        this.newInternalDomain = '';
+        return;
+      }
+      const next = [...existing, raw];
+      this.prefs.additional_internal_domains = next;
+      this.newInternalDomain = '';
+      await this._saveInternalDomains(next);
+    },
+
+    async removeInternalDomain(dom) {
+      const next = (this.prefs.additional_internal_domains || []).filter((d) => d !== dom);
+      this.prefs.additional_internal_domains = next;
+      await this._saveInternalDomains(next);
+    },
+
     async loadPrefs() {
       try {
         const r = await fetch('/api/prefs');
@@ -534,57 +632,26 @@ function wia() {
     },
 
     // ---- Impact ---------------------------------------------------------
+    // Impact is binary in v0.4: an entry is either a **Highlight** (the
+    // user explicitly starred it, or a customer/external signal promoted
+    // it) or **Standard**. The Briefing UI surfaces this as a single star
+    // toggle per row.
     impactLabel(impact) {
-      switch (impact) {
-        case 'high': return 'High';
-        case 'low': return 'Low';
-        default: return 'Med';
-      }
+      return impact === 'high' ? 'Highlight' : 'Standard';
     },
 
     impactBadgeClass(impact) {
-      switch (impact) {
-        case 'high':
-          return 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-700';
-        case 'low':
-          return 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700';
-        default:
-          return 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-200 dark:ring-indigo-800';
-      }
+      return impact === 'high'
+        ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-700'
+        : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700';
     },
 
-    impactSegmentClass(value, current) {
-      const active = (current || 'medium') === value;
-      if (!active) {
-        return 'bg-white text-slate-500 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800';
-      }
-      switch (value) {
-        case 'high':
-          return 'bg-amber-500 text-white dark:bg-amber-600';
-        case 'low':
-          return 'bg-slate-400 text-white dark:bg-slate-500';
-        default:
-          return 'bg-indigo-500 text-white dark:bg-indigo-600';
-      }
-    },
-
-    // Compact 3-dot impact picker: each dot is a click target that sets
-    // that level directly. Active dot is filled with the level's colour;
-    // inactive dots are outlined and dim. Saves ~75px per row vs. the
-    // old labelled segmented control while keeping one-click selection.
-    impactDotClass(value, current) {
-      const active = (current || 'medium') === value;
-      if (!active) {
-        return 'border border-slate-300 bg-transparent hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700';
-      }
-      switch (value) {
-        case 'high':
-          return 'bg-amber-500 ring-2 ring-amber-200 dark:bg-amber-500 dark:ring-amber-900';
-        case 'low':
-          return 'bg-slate-400 ring-2 ring-slate-200 dark:bg-slate-500 dark:ring-slate-700';
-        default:
-          return 'bg-indigo-500 ring-2 ring-indigo-200 dark:bg-indigo-500 dark:ring-indigo-900';
-      }
+    // Tailwind classes for the single ⭐ star toggle button. Filled amber
+    // when the entry is a Highlight; muted-slate outline otherwise.
+    impactStarClass(impact) {
+      return impact === 'high'
+        ? 'text-amber-500 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300'
+        : 'text-slate-300 hover:text-amber-400 dark:text-slate-600 dark:hover:text-amber-400';
     },
 
     // ---- Signal-source badges -------------------------------------------
@@ -646,7 +713,7 @@ function wia() {
 
     async setImpact(entry, value) {
       if (!entry) return;
-      const current = entry.impact || 'medium';
+      const current = entry.impact || 'low';
       if (current === value) return;
       const previous = entry.impact;
       entry.impact = value;
@@ -663,15 +730,21 @@ function wia() {
       }
     },
 
+    // One-click toggle helper for the ⭐ star button: flips between
+    // Highlight (high) and Standard (low).
+    toggleImpact(entry) {
+      if (!entry) return;
+      const next = (entry.impact || 'low') === 'high' ? 'low' : 'high';
+      return this.setImpact(entry, next);
+    },
+
     groupImpactSummary(group) {
-      const counts = { high: 0, medium: 0, low: 0 };
+      let high = 0;
       for (const e of group.entries) {
-        const k = e.impact || 'medium';
-        if (counts[k] !== undefined) counts[k] += 1;
+        if ((e.impact || 'low') === 'high') high += 1;
       }
-      if (counts.high) return `${counts.high} high`;
-      if (counts.medium) return `${counts.medium} med`;
-      return `${counts.low} low`;
+      if (!high) return '';
+      return `${high} ⭐`;
     },
 
     // ---- Week navigation -------------------------------------------------
@@ -1329,7 +1402,7 @@ function wia() {
     // ---- Manual entry form ----------------------------------------------
     openManualForm() {
       this.manualFormOpen = true;
-      this.manualEntry = { label: '', category: '', impact: 'medium', notes: '', daily: ['', '', '', '', '', '', ''] };
+      this.manualEntry = { label: '', category: '', impact: 'low', notes: '', daily: ['', '', '', '', '', '', ''] };
     },
 
     cancelManualForm() {
@@ -1368,7 +1441,7 @@ function wia() {
             category: (this.manualEntry.category || '').trim() || null,
             week_of: this.briefing?.week_start || this.weekStartIso(this.weekOffset),
             daily_hours: daily,
-            impact: this.manualEntry.impact || 'medium',
+            impact: this.manualEntry.impact || 'low',
             notes: this.manualEntry.notes || '',
           }),
         });

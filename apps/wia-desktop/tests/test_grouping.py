@@ -37,6 +37,71 @@ def test_fill_gaps_inserts_admin_and_focus():
     assert "Focus time" in titles
 
 
+def test_fill_gaps_skips_day_already_saturated():
+    """If the day's existing blocks already sum to a full work day,
+    don't synthesise more Admin / Focus time on top — that would
+    double-count when the user has many short Teams / email blocks
+    totalling > 8h but not occupying contiguous wall-clock time."""
+    # 10 hours of Teams / email engagement, spread across short blocks
+    # that leave plenty of wall-clock gaps in 9-17.
+    blocks = [
+        _b(9, 10, "Teams chat A", source=Source.TEAMS),
+        _b(11, 13, "Email thread A", source=Source.EMAIL),
+        _b(14, 15, "Teams chat B", source=Source.TEAMS),
+        _b(15, 21, "Email thread B", source=Source.EMAIL),  # extends past 17:00
+    ]
+    days = [datetime(2026, 4, 20, 0, 0, tzinfo=UTC)]
+    out = fill_gaps(blocks, days)
+    inferred_titles = [b.title for b in out if b.source is Source.INFERRED]
+    assert inferred_titles == []
+
+
+def test_fill_gaps_caps_synthesised_hours_at_work_day():
+    """Inferred Admin/Focus hours must never push a day past
+    GAP_FILL_DAY_CAP_HOURS, even when a block starts well after
+    WORK_DAY_END. Regression for the Thursday=13h balloon."""
+    # One 30-min block at 10pm (after-hours invite). The gap from 9am
+    # to 10pm is 13h, which used to be emitted verbatim as one big
+    # "Admin / Follow-up" block. With the per-day ceiling, real (0.5h)
+    # + inferred must total <= 8h, so inferred <= 7.5h.
+    late = ActivityBlock(
+        start=datetime(2026, 4, 20, 22, 0, tzinfo=UTC),
+        end=datetime(2026, 4, 20, 22, 30, tzinfo=UTC),
+        title="Late invite",
+        source=Source.CALENDAR,
+        confidence=Confidence.HIGH,
+    )
+    days = [datetime(2026, 4, 20, 0, 0, tzinfo=UTC)]
+    out = fill_gaps([late], days)
+    inferred_hours = sum(b.duration_hours for b in out if b.source is Source.INFERRED)
+    real_hours = sum(b.duration_hours for b in out if b.source is not Source.INFERRED)
+    assert real_hours + inferred_hours <= 8.0 + 1e-9
+    assert inferred_hours <= 7.5 + 1e-9
+
+
+def test_fill_gaps_partial_budget_still_emits_admin():
+    """When the day already has 6h of real activity, gap-fill should
+    add at most 2h of synthetic hours total, distributed across gaps
+    in chronological order."""
+    blocks = [
+        _b(9, 12, "Mtg A"),   # 3h
+        _b(12, 15, "Mtg B"),  # 3h, back-to-back
+        # 15:00-22:00 = 7h gap before this late block
+        ActivityBlock(
+            start=datetime(2026, 4, 20, 22, 0, tzinfo=UTC),
+            end=datetime(2026, 4, 20, 22, 30, tzinfo=UTC),
+            title="Late",
+            source=Source.CALENDAR,
+            confidence=Confidence.HIGH,
+        ),
+    ]
+    days = [datetime(2026, 4, 20, 0, 0, tzinfo=UTC)]
+    out = fill_gaps(blocks, days)
+    inferred_hours = sum(b.duration_hours for b in out if b.source is Source.INFERRED)
+    # Real = 6.5h, ceiling = 8h, so inferred capped at 1.5h.
+    assert inferred_hours <= 1.5 + 1e-9
+
+
 # --- cross-source dedup ---
 
 
