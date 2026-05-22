@@ -597,22 +597,16 @@
                           <span class="text-[11px] text-slate-500 dark:text-slate-400" x-text="groupImpactSummary(row.group)"></span>
                         </template>
                         <template x-if="row.kind === 'sub'">
-                          <div
-                            class="inline-flex items-center gap-1"
-                            role="group"
-                            :aria-label="'Impact for ' + (row.entry.label || 'entry')"
-                          >
-                            <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Medium'},{v:'high',l:'High'}]" :key="opt.v">
-                              <button
-                                type="button"
-                                @click="setImpact(row.entry, opt.v)"
-                                :class="impactDotClass(opt.v, row.entry.impact)"
-                                :aria-pressed="(row.entry.impact || 'medium') === opt.v"
-                                :title="opt.l + ' impact'"
-                                class="h-2.5 w-2.5 rounded-full transition-colors"
-                              ></button>
-                            </template>
-                          </div>
+                          <button
+                            type="button"
+                            @click="toggleImpact(row.entry)"
+                            :class="impactStarClass(row.entry.impact)"
+                            :aria-pressed="(row.entry.impact || 'low') === 'high'"
+                            :aria-label="((row.entry.impact || 'low') === 'high' ? 'Unmark' : 'Mark') + ' as highlight'"
+                            :title="(row.entry.impact || 'low') === 'high' ? 'Highlight (click to unmark)' : 'Mark as highlight'"
+                            class="inline-flex items-center justify-center rounded p-0.5 transition-colors"
+                            x-html="icon('star', 'h-4 w-4')"
+                          ></button>
                         </template>
                       </td>
                     </template>
@@ -787,17 +781,17 @@
           <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div class="flex flex-col gap-1 text-xs">
               <span class="text-slate-600 dark:text-slate-300">Impact</span>
-              <div class="inline-flex w-fit overflow-hidden rounded-full border border-slate-300 text-[11px] font-medium dark:border-slate-600" role="group" aria-label="Impact">
-                <template x-for="opt in [{v:'low',l:'Low'},{v:'medium',l:'Med'},{v:'high',l:'High'}]" :key="'mi-' + opt.v">
-                  <button
-                    type="button"
-                    @click="manualEntry.impact = opt.v"
-                    :class="impactSegmentClass(opt.v, manualEntry.impact)"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 leading-none border-l first:border-l-0 border-slate-300 dark:border-slate-600 transition-colors"
-                    x-text="opt.l"
-                  ></button>
-                </template>
-              </div>
+              <button
+                type="button"
+                @click="manualEntry.impact = manualEntry.impact === 'high' ? 'low' : 'high'"
+                :class="impactStarClass(manualEntry.impact)"
+                :aria-pressed="manualEntry.impact === 'high'"
+                :title="manualEntry.impact === 'high' ? 'Highlight (click to unmark)' : 'Mark as highlight'"
+                class="inline-flex w-fit items-center gap-1 rounded p-1 transition-colors"
+              >
+                <span x-html="icon('star', 'h-4 w-4')"></span>
+                <span class="text-[11px] font-medium" x-text="manualEntry.impact === 'high' ? 'Highlight' : 'Standard'"></span>
+              </button>
             </div>
             <label class="flex flex-col gap-1 text-xs">
               <span class="text-slate-600 dark:text-slate-300">Notes (optional)</span>

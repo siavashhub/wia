@@ -338,9 +338,8 @@ def _collect_notes(items: list[TimeEntry]) -> list[str]:
 
 
 def _dominant_impact(items: list[TimeEntry]) -> Impact:
-    """Pick the highest-priority impact across grouped entries (HIGH > MED > LOW)."""
-    order = {Impact.HIGH: 2, Impact.MEDIUM: 1, Impact.LOW: 0}
-    return max((e.impact for e in items), key=lambda i: order[i], default=Impact.MEDIUM)
+    """Promote a group to HIGH if any constituent entry is HIGH, else LOW."""
+    return Impact.HIGH if any(e.impact is Impact.HIGH for e in items) else Impact.LOW
 
 
 def _weekly_trend(period_entries: list[TimeEntry], start: date, end: date) -> list[WeeklyPoint]:

@@ -26,12 +26,17 @@ def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
     # Lightweight migrations for columns added after first release.
     _add_column_if_missing("time_entry", "daily_hours", "TEXT NOT NULL DEFAULT ''")
-    _add_column_if_missing("time_entry", "impact", "TEXT NOT NULL DEFAULT 'medium'")
+    _add_column_if_missing("time_entry", "impact", "TEXT NOT NULL DEFAULT 'low'")
     _add_column_if_missing("time_entry", "notes", "TEXT NOT NULL DEFAULT ''")
     _add_column_if_missing("time_entry", "manual", "INTEGER NOT NULL DEFAULT 0")
     # Comma-joined signal sources ("calendar", "teams", "email", "inferred",
     # "manual"). Surfaces provenance tags in the Briefing UI.
     _add_column_if_missing("time_entry", "sources", "TEXT NOT NULL DEFAULT ''")
+    # v0.4: Impact collapsed from 3-tier (high/medium/low) to binary
+    # (high/low). Coerce any persisted ``medium`` rows so the UI doesn't
+    # render them as an unknown state.
+    with _engine.begin() as conn:
+        conn.execute(text("UPDATE time_entry SET impact='low' WHERE impact='medium'"))
 
 
 def get_session() -> Session:

@@ -23,29 +23,25 @@ DEFAULT_KEYWORD_MAP: dict[str, str] = {
     "interview": "Recruiting",
 }
 
-# Categories that default to "low impact" — i.e. de-emphasized in WIA Review
-# unless the user explicitly tags an entry as high impact. Internal sprints,
-# standups, all-hands etc. live here; the user's own organization label
-# (e.g. "Microsoft") is appended at runtime.
-DEFAULT_LOW_IMPACT_CATEGORIES: frozenset[str] = frozenset({"internal", "admin"})
-
 
 def default_impact_for_category(
-    category: str | None,
+    category: str | None = None,
     *,
-    organization_label: str | None = None,
-    extra_low_impact: Iterable[str] = (),
+    organization_label: str | None = None,  # kept for caller compatibility (no-op since v0.4)
+    extra_low_impact: Iterable[str] = (),  # kept for caller compatibility (no-op since v0.4)
     label: str | None = None,
     high_impact_keywords: Iterable[str] = (),
 ) -> Impact:
     """Return the default :class:`Impact` for an entry with ``category``.
 
+    Impact is binary in v0.4 — every entry is either a **Highlight**
+    (:attr:`Impact.HIGH`) or **Standard** (:attr:`Impact.LOW`). This
+    helper only promotes to HIGH; everything else returns LOW.
+
     - If ``label`` contains any of ``high_impact_keywords`` (case-insensitive
       substring match), the result is :attr:`Impact.HIGH` — this takes
       precedence over the category-based default below.
-    - ``Internal`` and ``Admin`` (case-insensitive) → :attr:`Impact.LOW`.
-    - The user's organization label (e.g. ``"Microsoft"``) → :attr:`Impact.LOW`.
-    - Anything else → :attr:`Impact.MEDIUM`.
+    - Anything else → :attr:`Impact.LOW`.
     """
     if label and high_impact_keywords:
         haystack = label.lower()
@@ -54,22 +50,7 @@ def default_impact_for_category(
                 needle = kw.strip().lower()
                 if needle and needle in haystack:
                     return Impact.HIGH
-    if not category:
-        return Impact.MEDIUM
-    cat_lower = category.strip().lower()
-    if not cat_lower:
-        return Impact.MEDIUM
-    low_set = set(DEFAULT_LOW_IMPACT_CATEGORIES)
-    if organization_label:
-        org_lower = organization_label.strip().lower()
-        if org_lower:
-            low_set.add(org_lower)
-    for extra in extra_low_impact:
-        if isinstance(extra, str) and extra.strip():
-            low_set.add(extra.strip().lower())
-    if cat_lower in low_set:
-        return Impact.LOW
-    return Impact.MEDIUM
+    return Impact.LOW
 
 
 def _classify_title(title: str, keyword_map: dict[str, str]) -> str | None:
@@ -434,9 +415,10 @@ def aggregate_entries(
     :func:`_client_from_participants`).
 
     ``organization_label`` is the user's own org name (derived from their
-    sign-in domain, e.g. ``"Microsoft"``). Categories matching it default
-    to :attr:`Impact.LOW` alongside the built-in ``Internal``/``Admin``
-    buckets.
+    sign-in domain, e.g. ``"Microsoft"``). Currently a no-op for impact
+    (Impact is binary — Highlight vs. Standard — and defaults to LOW for
+    every entry that isn't explicitly promoted); accepted for backward
+    compatibility with older callers.
 
     ``high_impact_keywords`` is a list of user-defined substrings that, when
     found (case-insensitive) in an entry's label or any constituent block

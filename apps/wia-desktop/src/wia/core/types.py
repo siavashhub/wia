@@ -16,15 +16,21 @@ class Confidence(StrEnum):
 
 
 class Impact(StrEnum):
-    """Business-impact tag for a time entry.
+    """Binary business-impact tag for a time entry.
 
-    Drives WIA Review's "what to highlight" logic — high-impact items are
-    surfaced in talking points and insights, while low-impact items
-    (Internal / Admin / the user's own org) are de-emphasized.
+    WIA collapsed the old three-tier scale (High / Medium / Low) to a
+    binary in v0.4: every entry is either a **Highlight** (the user, or
+    a clear customer/external signal, says this is a career-moment) or
+    **Standard** (everything else). The Review UI keys off ``HIGH`` to
+    surface achievements and ⭐ talking points; ``LOW`` is the neutral
+    default and means "normal work" rather than "low value".
+
+    Legacy ``medium`` rows persisted by older builds are coerced to
+    :attr:`LOW` on read (see ``wia.storage.entries._row_to_entry``) and
+    rewritten by the lightweight migration in ``wia.storage.db.init_db``.
     """
 
     HIGH = "high"
-    MEDIUM = "medium"
     LOW = "low"
 
 
@@ -58,7 +64,7 @@ class TimeEntry(BaseModel):
     category: str | None = None
     duration_hours: float
     confidence: Confidence = Confidence.MEDIUM
-    impact: Impact = Impact.MEDIUM
+    impact: Impact = Impact.LOW
     week_of: str | None = None  # ISO date of week start (Monday)
     source_block_ids: list[int] = Field(default_factory=list)
     daily_hours: dict[str, float] = Field(default_factory=dict)
@@ -125,7 +131,7 @@ class TopLabel(BaseModel):
     category: str | None = None
     hours: float
     weeks_active: int
-    impact: Impact = Impact.MEDIUM
+    impact: Impact = Impact.LOW
     notes: list[str] = Field(default_factory=list)
     """User-authored notes from the underlying entries (deduplicated, in order)."""
 

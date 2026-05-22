@@ -27,7 +27,7 @@ class ManualEntryCreate(BaseModel):
     week_of: str | None = None  # ISO Monday; derived from daily_hours if omitted
     duration_hours: float | None = None
     daily_hours: dict[str, float] = Field(default_factory=dict)
-    impact: Impact = Impact.MEDIUM
+    impact: Impact = Impact.LOW
     notes: str = ""
 
 

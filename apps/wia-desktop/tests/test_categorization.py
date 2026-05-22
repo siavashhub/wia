@@ -198,29 +198,30 @@ def test_infer_sources_from_label_empty():
 def test_default_impact_internal_admin_low():
     assert default_impact_for_category("Internal") is Impact.LOW
     assert default_impact_for_category("admin") is Impact.LOW
-    assert default_impact_for_category("Design") is Impact.MEDIUM
-    assert default_impact_for_category(None) is Impact.MEDIUM
+    assert default_impact_for_category("Design") is Impact.LOW
+    assert default_impact_for_category(None) is Impact.LOW
 
 
 def test_default_impact_organization_label_low():
-    # User's own org categories also default to Low.
+    # Impact defaults to LOW for every category now; organization_label
+    # is accepted for backward compatibility but no longer changes the
+    # result on its own (Highlight comes from explicit keyword/category
+    # matches or the user's star toggle).
     assert default_impact_for_category("Microsoft", organization_label="Microsoft") is Impact.LOW
-    # Case-insensitive match.
     assert default_impact_for_category("microsoft", organization_label="Microsoft") is Impact.LOW
-    # Other categories untouched.
-    assert default_impact_for_category("Client A", organization_label="Microsoft") is Impact.MEDIUM
+    assert default_impact_for_category("Client A", organization_label="Microsoft") is Impact.LOW
 
 
 def test_aggregate_assigns_default_impact():
     blocks = [
         _b("Standup"),  # → Internal → LOW
-        _b("Design review"),  # → Design → MEDIUM
+        _b("Design review"),  # → Design → LOW (no high-impact keyword)
         _b("Microsoft sync"),  # title contains nothing matching keyword map → category "Internal"
     ]
     entries = aggregate_entries(blocks, organization_label="Microsoft")
     by_cat = {e.category: e.impact for e in entries}
     assert by_cat["Internal"] is Impact.LOW
-    assert by_cat["Design"] is Impact.MEDIUM
+    assert by_cat["Design"] is Impact.LOW
 
 
 def test_default_impact_high_keyword_overrides_low():
@@ -256,7 +257,7 @@ def test_default_impact_high_keyword_overrides_low():
     # Empty keywords list is a no-op.
     assert (
         default_impact_for_category("Design", label="Design – Launch", high_impact_keywords=[])
-        is Impact.MEDIUM
+        is Impact.LOW
     )
 
 
@@ -264,7 +265,7 @@ def test_aggregate_high_impact_keyword_promotes_entry():
     blocks = [
         _b("Standup"),  # Internal → LOW normally
         _b("Project Atlas launch sync"),  # Internal → would be LOW, but matches keyword
-        _b("Design review"),  # Design → MEDIUM
+        _b("Design review"),  # Design → LOW
     ]
     entries = aggregate_entries(
         blocks,
@@ -292,7 +293,7 @@ def test_aggregate_high_impact_category_promotes_entry():
     # promoted to HIGH even when its category would otherwise be LOW.
     blocks = [
         _bcat("Standup", categories=["Customer"]),  # Internal → LOW, but flagged
-        _b("Design review"),  # Design → MEDIUM
+        _b("Design review"),  # Design → LOW
     ]
     entries = aggregate_entries(
         blocks,
@@ -302,7 +303,7 @@ def test_aggregate_high_impact_category_promotes_entry():
     standup = next(e for e in entries if "Standup" in e.label)
     assert standup.impact is Impact.HIGH
     design = next(e for e in entries if "Design" in e.label)
-    assert design.impact is Impact.MEDIUM
+    assert design.impact is Impact.LOW
 
 
 def test_aggregate_high_impact_category_case_insensitive():

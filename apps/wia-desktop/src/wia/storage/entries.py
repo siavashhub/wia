@@ -20,9 +20,11 @@ def _row_to_entry(row: TimeEntryRow) -> TimeEntry:
     except json.JSONDecodeError:
         daily = {}
     try:
-        impact = Impact(row.impact) if row.impact else Impact.MEDIUM
+        impact = Impact(row.impact) if row.impact else Impact.LOW
     except ValueError:
-        impact = Impact.MEDIUM
+        # Legacy ``medium`` rows (and any other unknown value) collapse to
+        # LOW under the v0.4 binary scale.
+        impact = Impact.LOW
     sources = [s for s in (row.sources or "").split(",") if s]
     if not sources and not row.manual:
         # Backfill rows that pre-date the ``sources`` column with a

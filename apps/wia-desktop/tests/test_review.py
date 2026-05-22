@@ -28,7 +28,7 @@ def _make(
     week_of: str,
     daily: dict[str, float],
     confidence: Confidence = Confidence.HIGH,
-    impact: Impact = Impact.MEDIUM,
+    impact: Impact = Impact.LOW,
 ) -> TimeEntry:
     return TimeEntry(
         label=label,

@@ -11,7 +11,7 @@ from wia.storage.models import TimeEntryRow
 WEEK = "2026-05-11"
 
 
-def _entry(label, *, category, hours=1.0, block_ids=(), impact=Impact.MEDIUM):
+def _entry(label, *, category, hours=1.0, block_ids=(), impact=Impact.LOW):
     return TimeEntry(
         label=label,
         category=category,
@@ -280,7 +280,7 @@ def test_merge_preserves_manual_row():
                 category="Customer",
                 duration_hours=2.0,
                 confidence="high",
-                impact="medium",
+                impact="low",
                 week_of=WEEK,
                 source_block_ids="",
                 daily_hours="{}",
@@ -455,7 +455,7 @@ def test_merge_unions_signal_sources():
         category="Customer",
         duration_hours=1.0,
         confidence=Confidence.HIGH,
-        impact=Impact.MEDIUM,
+        impact=Impact.LOW,
         source_block_ids=[1],
         daily_hours={},
         week_of=WEEK,
@@ -466,7 +466,7 @@ def test_merge_unions_signal_sources():
         category="Customer",
         duration_hours=1.5,
         confidence=Confidence.HIGH,
-        impact=Impact.MEDIUM,
+        impact=Impact.LOW,
         source_block_ids=[1],
         daily_hours={},
         week_of=WEEK,
@@ -491,7 +491,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
                 category="Service",
                 duration_hours=0.5,
                 confidence="medium",
-                impact="medium",
+                impact="low",
                 week_of=WEEK,
                 source_block_ids="",
                 daily_hours="{}",
@@ -502,7 +502,7 @@ def test_list_entries_backfills_empty_sources_with_heuristic():
                 category="Other",
                 duration_hours=0.5,
                 confidence="medium",
-                impact="medium",
+                impact="low",
                 week_of=WEEK,
                 source_block_ids="",
                 daily_hours="{}",
@@ -537,7 +537,7 @@ def test_list_entries_does_not_backfill_manual_rows_without_sources():
                 category="Customer",
                 duration_hours=1.0,
                 confidence="high",
-                impact="medium",
+                impact="low",
                 week_of=WEEK,
                 source_block_ids="",
                 daily_hours="{}",
