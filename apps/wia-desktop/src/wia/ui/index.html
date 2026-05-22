@@ -568,7 +568,7 @@
                                 :aria-label="'Decrease ' + dayLabel(i) + ' hours'"
                                 title="Subtract 15 min (Shift = 1 h)"
                                 class="text-slate-400 opacity-0 transition-opacity hover:text-slate-700 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 disabled:pointer-events-none disabled:opacity-0 dark:hover:text-slate-200"
-                              ><span x-html="icon('chevron-down', 'h-3.5 w-3.5')"></span></button>
+                              ><span x-html="icon('chevron-down', 'h-4 w-4')"></span></button>
                               <span
                                 :class="((row.entry.daily_hours || {})[dayIso(i)] || 0) === 0 ? 'text-slate-300 dark:text-slate-600' : ''"
                                 x-text="((row.entry.daily_hours || {})[dayIso(i)] || 0) > 0 ? hhmm((row.entry.daily_hours || {})[dayIso(i)]) : '—'"
@@ -580,7 +580,7 @@
                                 :aria-label="'Increase ' + dayLabel(i) + ' hours'"
                                 title="Add 15 min (Shift = 1 h)"
                                 class="text-slate-400 opacity-0 transition-opacity hover:text-slate-700 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 dark:hover:text-slate-200"
-                              ><span x-html="icon('chevron-up', 'h-3.5 w-3.5')"></span></button>
+                              ><span x-html="icon('chevron-up', 'h-4 w-4')"></span></button>
                             </span>
                           </template>
                         </td>
@@ -605,7 +605,7 @@
                             :aria-label="((row.entry.impact || 'low') === 'high' ? 'Unmark' : 'Mark') + ' as highlight'"
                             :title="(row.entry.impact || 'low') === 'high' ? 'Highlight (click to unmark)' : 'Mark as highlight'"
                             class="inline-flex items-center justify-center rounded p-0.5 transition-colors"
-                            x-html="icon('star', 'h-4 w-4')"
+                            x-html="icon('star', 'h-5 w-5')"
                           ></button>
                         </template>
                       </td>
@@ -789,7 +789,7 @@
                 :title="manualEntry.impact === 'high' ? 'Highlight (click to unmark)' : 'Mark as highlight'"
                 class="inline-flex w-fit items-center gap-1 rounded p-1 transition-colors"
               >
-                <span x-html="icon('star', 'h-4 w-4')"></span>
+                <span x-html="icon('star', 'h-5 w-5')"></span>
                 <span class="text-[11px] font-medium" x-text="manualEntry.impact === 'high' ? 'Highlight' : 'Standard'"></span>
               </button>
             </div>
