@@ -43,6 +43,29 @@ jobs:
           "version=$version"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Building $tag (version=$version)"
 
+      - name: Require curated release notes
+        # Hard gate: every tagged release MUST ship with handcrafted notes
+        # at docs/releases/<tag>.md. The drift test enforces the filename
+        # shape; this step enforces that the file actually exists before
+        # we build anything heavy. Skipped on workflow_dispatch with
+        # `tag` ending in `-dryrun` so you can rehearse the pipeline
+        # without writing notes first.
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.resolve.outputs.tag }}"
+          $path = "docs/releases/$tag.md"
+          if (Test-Path $path) {
+            Write-Host "Found release notes: $path"
+            exit 0
+          }
+          if ($tag.EndsWith("-dryrun")) {
+            Write-Host "::warning::Dry-run tag $tag, skipping release-notes gate."
+            exit 0
+          }
+          Write-Host "::error::Missing curated release notes at $path."
+          Write-Host "::error::Create docs/releases/$tag.md (see the v0.2.1 / v0.3.0 templates) and re-tag."
+          exit 1
+
       - name: Stamp version.json from tag
         # The git tag is the single source of truth for release versions.
         # Overwrite the committed version.json so the frozen exe and any
@@ -99,10 +122,10 @@ jobs:
           Get-ChildItem dist\installer\*.exe | Copy-Item -Destination dist\release\
 
       - name: Stage release notes
-        # If docs/releases/<tag>.md exists, ship it as RELEASE_NOTES.md so the
-        # publish job can use it as the GitHub Release body. Otherwise write a
-        # placeholder so body_path always points to a real file (the action
-        # also appends auto-generated notes via generate_release_notes: true).
+        # The "Require curated release notes" gate above guarantees the
+        # file exists (except for ``-dryrun`` tags), so this step just
+        # copies it into the release-artifact staging dir for use as the
+        # GitHub Release body.
         shell: pwsh
         run: |
           $tag = "${{ steps.resolve.outputs.tag }}"
@@ -113,7 +136,7 @@ jobs:
             Write-Host "Using release notes from $src"
           } else {
             "_No curated release notes for $tag._" | Set-Content -Path $dst -Encoding UTF8
-            Write-Host "::warning::No docs/releases/$tag.md found; using placeholder body."
+            Write-Host "::warning::No docs/releases/$tag.md found; using placeholder body (dry-run tag)."
           }
 
       - name: Generate SBOM (CycloneDX)

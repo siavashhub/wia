@@ -63,6 +63,28 @@ short and factual.
   packages. CodeQL + Dependency Review run on every PR — fix high-severity
   findings before requesting review.
 
+## Documentation obligations
+
+Documentation is treated as code. A PR that adds or changes a user-visible
+surface without updating the matching docs is incomplete and will fail CI
+(see `apps/wia-desktop/tests/test_docs_drift.py`).
+
+When you change code under these paths, you **must** update the listed docs
+in the same PR:
+
+| Code change | Docs to touch |
+| --- | --- |
+| New / removed module under `apps/wia-desktop/src/wia/` | [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) module map |
+| New router in `apps/wia-desktop/src/wia/api/` | [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) module map + diagram |
+| New / renamed `Tool(name=...)` in `wia.mcp_server.server` | [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) **and** the module docstring at the top of `server.py` |
+| New top-level feature / tab | [docs/ROADMAP.md](../docs/ROADMAP.md): move it from Planned to Shipped with the release it lands in |
+| Shipping a release tag `vX.Y.Z` | Create `docs/releases/vX.Y.Z.md` *before* pushing the tag — `release.yml` will refuse to publish without it |
+| User-visible behaviour change | [README.md](../README.md) and [apps/wia-desktop/README.md](../apps/wia-desktop/README.md) if they mention the affected surface |
+
+Link to files using workspace-relative paths so the docs-drift link checker
+can verify them. Do not break links into `docs/releases/`, `docs/AUTH.md`,
+or any spec under `apps/wia-desktop/docs/`.
+
 ## Pull request etiquette
 
 - Keep PRs focused; update `docs/` when behavior or architecture changes.
