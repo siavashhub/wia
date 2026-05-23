@@ -63,7 +63,7 @@ jobs:
     needs: lint-and-test
     steps:
 <<<<<<< HEAD
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
 =======
       - uses: actions/checkout@v6
