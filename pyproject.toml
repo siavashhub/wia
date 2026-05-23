@@ -36,5 +36,5 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=7.1.0",
 >>>>>>> 51310fd2d2d5066062954f9d7ec8b988f85adad5
-    "pre-commit>=3.7",
+    "pre-commit>=4.6.0",
 ]
