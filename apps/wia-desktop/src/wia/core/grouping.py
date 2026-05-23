@@ -214,6 +214,12 @@ def clamp_long_blocks(
         if not same_day and b.source is Source.CALENDAR:
             day = start_local.date()
             last_day = end_local.date()
+            # An end timestamp at exact local midnight is the exclusive end
+            # of the previous day (typical for Outlook all-day events that
+            # span Mon 00:00 -> Thu 00:00 to mean Mon-Wed). Without this,
+            # iteration on UTC-aligned runners adds a phantom trailing day.
+            if end_local.time() == time(0, 0) and last_day > day:
+                last_day -= timedelta(days=1)
             while day <= last_day:
                 # Skip weekends for all-day spans — they're almost never
                 # representative of real work time.
