@@ -28,7 +28,7 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -78,7 +78,7 @@ jobs:
           ($data | ConvertTo-Json -Depth 10) | Set-Content -Path $path -Encoding UTF8
           Get-Content $path
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -156,14 +156,14 @@ jobs:
         # Build provenance attestations require a public repo (or GitHub
         # Enterprise). Skip for private repos so the release still publishes.
         if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/release/*.exe
             dist/release/*.zip
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wia-release-${{ steps.resolve.outputs.tag }}
           path: dist/release/*

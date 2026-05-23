@@ -22,10 +22,10 @@ jobs:
       matrix:
         python-version: ["3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -49,7 +49,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-py${{ matrix.python-version }}
           path: |
@@ -62,8 +62,13 @@ jobs:
     runs-on: windows-latest
     needs: lint-and-test
     steps:
+<<<<<<< HEAD
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+=======
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v3
+>>>>>>> ab30b5528fe8500c36e2bdbd592049e26af31de6
         with:
           enable-cache: true
       - run: uv python install 3.12
